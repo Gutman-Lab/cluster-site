@@ -1,0 +1,6 @@
+configuration,seq_write_mib_s,vs_baseline_pct,change
+baseline,375,0,"special_small_blocks=128K, logbias=latency, zfs_dirty_data_max=4GB"
+after_special_small_blocks_0,478,27,"special_small_blocks=0"
+after_logbias_throughput,524,40,"logbias=throughput"
+after_dirty_data_8gb,568,51,"zfs_dirty_data_max=8GB"
+after_dirty_data_32gb,4271,1039,"zfs_dirty_data_max=32GB"

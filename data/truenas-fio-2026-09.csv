@@ -1,0 +1,5 @@
+pool,host,architecture,arc_hit_pct,seq_write_mib_s,seq_read_mib_s,rand4k_read_iops,mixed70_read_iops,mixed70_write_iops
+daghome,icarus,"4x mirror + NVMe special + SLOG",94.1,4271,4430,621000,54800,23500
+samsungssd,scratchy,"3x mirror + NVMe special",99.7,1413,6403,253000,29600,12700
+slidevault,brainhost,"2x 6-wide RAIDZ2 + NVMe special + SLOG",96.1,1405,6675,237000,26600,11400
+tank,gauss,"2x 6-wide RAIDZ2 + NVMe special",98.9,905,6420,101000,15100,6477

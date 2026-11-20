@@ -1,0 +1,7 @@
+test,tier,write_bw_mb_s,write_iops,read_bw_mb_s,read_iops,rand_read_bw_mb_s,rand_read_iops,notes
+4MB,NVMe,1175,293,1175,294,1175,294,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
+4MB,SSD,431,107,1170,292,1170,292,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
+4MB,HDD+NVMe WAL,346,86,852,213,852,213,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
+4KB,NVMe,32.5,8320,125,32024,,,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
+4KB,SSD,7.8,1999,147,37629,,,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
+4KB,HDD+NVMe WAL,9.0,2299,94,23988,,,"rados bench 30s, 16 threads, 3x replication, MTU 9000"
