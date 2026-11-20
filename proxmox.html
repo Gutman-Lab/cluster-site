@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proxmox and pmoxprime — cluster.drgutman.org</title>
+<meta name="description" content="A short Proxmox primer and a tour of pmoxprime: 15 nodes, four Ceph device classes, 25 GbE storage fabric, and the pools that map workloads to hardware.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="container">
+    <a class="brand" href="index.html">cluster<span>.drgutman.org</span></a>
+    <nav class="navlinks">
+      <a href="index.html">Overview</a>
+      <a href="proxmox.html" aria-current="page">Proxmox</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="kubertpmox.html">kubertpmox</a>
+      <a href="notes/index.html">Notes</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+
+  <section>
+    <h1 style="margin-top:2rem">Proxmox, briefly</h1>
+    <p class="lead">Proxmox Virtual Environment (PVE) is a Debian-based virtualization platform. A PVE <em>cluster</em> is a group of physical hosts that share configuration, authentication, and a quorum service; each host can run QEMU virtual machines and LXC containers, and VMs can migrate between hosts.</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>Cluster and quorum</h4>
+        <div class="detail">Nodes join a cluster through Corosync. A majority of votes must be present for the cluster to make changes. <code>pvecm status</code> shows membership and quorum.</div>
+      </div>
+      <div class="card">
+        <h4>Storage, local or shared</h4>
+        <div class="detail">PVE can use local disks (LVM, ZFS, directories) or shared storage such as NFS, iSCSI, or Ceph RBD. Shared storage is what makes live migration and HA practical.</div>
+      </div>
+      <div class="card">
+        <h4>Ceph inside Proxmox</h4>
+        <div class="detail">PVE can deploy and manage Ceph directly. Each host contributes OSDs; pools are exposed to PVE as storage. Replication and placement are handled by Ceph, not by RAID.</div>
+      </div>
+      <div class="card">
+        <h4>Backups and HA</h4>
+        <div class="detail">Proxmox Backup Server provides incremental, deduplicated backups. HA moves or restarts guests when a node fails, but only for resources explicitly placed under HA management.</div>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <h4>Why this matters for the tour</h4>
+      <p>The cluster's flexibility comes from two layers: Proxmox decides <em>where a VM runs</em>, and Ceph decides <em>where its blocks live</em>. A VM's disk can be on a pool backed by HDDs, SATA SSDs, NVMe, or Optane-accelerated SSDs without changing anything inside the guest.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>pmoxprime at a glance</h2>
+    <p>pmoxprime is the production-adjacent cluster: fifteen Proxmox hosts, a seven-monitor Ceph quorum, and roughly half a petabyte of raw Ceph capacity. It is not a uniform deployment. Nodes differ in CPU generation, RAM population, drive count, and role.</p>
+
+    <div class="diagram">
+      <div class="title">pmoxprime topology</div>
+┌──────────────────────────────────────────────────────────┐
+│                    15 × Proxmox nodes                    │
+│   pmox2053–pmox2065, titan, triton                       │
+│   25 GbE Ceph fabric (MTU 9000) + 10 GbE public mesh     │
+├──────────────────────────────────────────────────────────┤
+│                     Ceph Squid                           │
+│   ┌──────┐  ┌──────┐  ┌──────┐  ┌──────────┐            │
+│   │ HDD  │  │ SSD  │  │ NVMe │  │ Optane-  │            │
+│   │      │  │      │  │      │  │ backed   │            │
+│   └──────┘  └──────┘  └──────┘  └──────────┘            │
+│      │          │         │           │                  │
+│   replicated  replicated  replicated  ssdoptane_rule     │
+│   -hdd        -ssd        -nvme                          │
+├──────────────────────────────────────────────────────────┤
+│  4 × TrueNAS SCALE hosts · 2 × QNAP archival NAS         │
+│  Proxmox Backup Server · separate kubertpmox DR cluster  │
+└──────────────────────────────────────────────────────────┘
+    </div>
+
+    <h3>Node hardware (September 2026 benchmark snapshot)</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Node</th><th class="num">RAM</th><th class="num">NVMe</th><th class="num">SSD</th><th class="num">HDD</th><th class="num">Raw</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td>pmox2062</td><td class="num">188 GiB</td><td class="num">3</td><td class="num">1</td><td class="num">11</td><td class="num">83 TB</td><td>Storage workhorse</td></tr>
+        <tr><td>pmox2061</td><td class="num">188 GiB</td><td class="num">2</td><td class="num">1</td><td class="num">10</td><td class="num">75 TB</td><td>Heavy HDD host</td></tr>
+        <tr><td>titan</td><td class="num">188 GiB</td><td class="num">2</td><td class="num">1</td><td class="num">8</td><td class="num">64 TB</td><td>Mixed storage</td></tr>
+        <tr><td>pmox2057</td><td class="num">188 GiB</td><td class="num">1</td><td class="num">1</td><td class="num">7</td><td class="num">45 TB</td><td>HDD bulk</td></tr>
+        <tr><td>pmox2059</td><td class="num">377 GiB</td><td class="num">1</td><td class="num">1</td><td class="num">7</td><td class="num">44 TB</td><td>HDD bulk</td></tr>
+        <tr><td>pmox2060</td><td class="num">377 GiB</td><td class="num">1</td><td class="num">1</td><td class="num">6</td><td class="num">44 TB</td><td>HDD bulk</td></tr>
+        <tr><td>pmox2058</td><td class="num">314 GiB</td><td class="num">2</td><td class="num">1</td><td class="num">5</td><td class="num">40 TB</td><td>Hybrid</td></tr>
+        <tr><td>pmox2055</td><td class="num">503 GiB</td><td class="num">2</td><td class="num">8</td><td class="num">0</td><td class="num">27 TB</td><td>All-flash compute</td></tr>
+        <tr><td>pmox2053</td><td class="num">503 GiB</td><td class="num">1</td><td class="num">7</td><td class="num">0</td><td class="num">25 TB</td><td>All-flash compute</td></tr>
+        <tr><td>pmox2064</td><td class="num">503 GiB</td><td class="num">2</td><td class="num">8</td><td class="num">0</td><td class="num">25 TB</td><td>All-flash + Optane</td></tr>
+        <tr><td>pmox2054</td><td class="num">503 GiB</td><td class="num">2</td><td class="num">7</td><td class="num">0</td><td class="num">23 TB</td><td>All-flash compute</td></tr>
+        <tr><td>pmox2056</td><td class="num">503 GiB</td><td class="num">2</td><td class="num">7</td><td class="num">0</td><td class="num">23 TB</td><td>All-flash compute</td></tr>
+        <tr><td>pmox2063</td><td class="num">503 GiB</td><td class="num">0</td><td class="num">8</td><td class="num">0</td><td class="num">21 TB</td><td>SSD-only</td></tr>
+        <tr><td>triton</td><td class="num">6 TB</td><td class="num">2</td><td class="num">1</td><td class="num">0</td><td class="num">6 TB</td><td>Mon + mgr, control plane</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="small muted">September 2026 snapshot. <strong>pmox2065</strong> was added in November 2026 with three 10 TB HDDs and a local NVMe for WAL/DB; the cluster is now 15 nodes / 104 OSDs / 531 TiB raw. triton's 6 TB is flash used for the control plane, not bulk storage.</p>
+
+    <h3>RAM and network</h3>
+    <p>Total RAM is roughly <strong>5.2 TiB of DDR4 ECC</strong>, a mix of 16 GB and 32 GB modules at 2133–2666 MT/s. Population is uneven by design: the all-flash compute nodes carry 503 GiB each, while the HDD hosts carry 188–377 GiB. Several nodes have empty DIMM slots, so memory can be expanded without replacing what is already there.</p>
+    <p>Storage traffic runs on a dedicated <strong>25 GbE</strong> fabric (Mellanox ConnectX-4 Lx on the nodes that have been upgraded) with <strong>MTU 9000</strong>. A separate 10 GbE mesh carries public VM and management traffic. The Ceph public and cluster networks are separated; a misconfigured switch port or a single MTU 1500 host is enough to degrade the whole tier, which is why the fabric is checked end-to-end rather than per host.</p>
+  </section>
+
+  <section>
+    <h2>Ceph: four tiers, one cluster</h2>
+    <p>The architectural decision that makes heterogeneity work is the <strong>CRUSH device-class hierarchy</strong>. Each drive class gets its own rule, and each workload gets a pool that maps to the rule it needs. Ceph still treats the cluster as one pool of storage, but placement is explicit instead of accidental.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tier</th><th class="num">OSDs*</th><th>Device class</th><th>CRUSH rule</th><th>Pools</th><th>Latency profile</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-hdd">HDD</span></td><td class="num">53</td><td>hdd</td><td>replicated-hdd</td><td>ceph_bulk, cephfs_images_bulk (EC), profile_hdd</td><td>High capacity, moderate latency</td></tr>
+        <tr><td><span class="tag tag-ssd">SSD</span></td><td class="num">28</td><td>ssd</td><td>replicated-ssd</td><td>ceph_ssd</td><td>Balanced</td></tr>
+        <tr><td><span class="tag tag-nvme">NVMe</span></td><td class="num">10</td><td>nvme</td><td>replicated-nvme</td><td>ceph_nvme, profile_nvme</td><td>Low latency, high IOPS</td></tr>
+        <tr><td><span class="tag tag-optane">Optane-backed</span></td><td class="num">8</td><td>SSDoptane</td><td>ssdoptane_rule</td><td>ceph_optane</td><td>Ultra-low latency</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="small muted">*Counts at the September 2026 benchmark. The cluster now has 104 OSDs after the pmox2065 HDD expansion.</p>
+
+    <h3>BlueFS DB/WAL offload</h3>
+    <p>Not every OSD keeps its data and metadata on the same device. HDD OSDs put their write-ahead log on NVMe; Optane-backed OSDs pair a 3.49 TB SATA SSD with a dedicated 64 GB NVMe partition for the BlueFS DB, with WAL co-located. This is the single biggest reason the HDD tier is competitive on small writes.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Class</th><th>Data device</th><th>DB device</th><th>WAL device</th><th>Shared?</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tag tag-hdd">HDD</span></td><td>HDD</td><td>on HDD</td><td>NVMe</td><td>No</td></tr>
+        <tr><td><span class="tag tag-ssd">SSD</span></td><td>SATA SSD</td><td>on SSD</td><td>on SSD</td><td>Yes</td></tr>
+        <tr><td><span class="tag tag-nvme">NVMe</span></td><td>NVMe</td><td>on NVMe</td><td>on NVMe</td><td>Yes</td></tr>
+        <tr><td><span class="tag tag-optane">Optane-backed</span></td><td>SATA SSD</td><td>64 GB NVMe (dedicated)</td><td>co-located with DB</td><td>No</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Pool layout</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Pool</th><th>Type</th><th>Size</th><th class="num">PGs</th><th>Rule</th><th>Apps</th></tr></thead>
+      <tbody>
+        <tr><td>ceph_bulk</td><td>replicated</td><td>3/2</td><td class="num">512</td><td>replicated-hdd</td><td>rbd</td></tr>
+        <tr><td>ceph_nvme</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated-nvme</td><td>rbd</td></tr>
+        <tr><td>ceph_optane</td><td>replicated</td><td>3/2</td><td class="num">32</td><td>ssdoptane_rule</td><td>rbd</td></tr>
+        <tr><td>ceph_ssd</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated-ssd</td><td>rbd</td></tr>
+        <tr><td>cephfs_images_bulk</td><td>erasure-coded</td><td>6/5</td><td class="num">512</td><td>cephfs_images_bulk</td><td>cephfs</td></tr>
+        <tr><td>cephfs_images_meta</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated_rule</td><td>cephfs</td></tr>
+        <tr><td>profile_hdd / profile_nvme</td><td>replicated</td><td>3/2</td><td class="num">32</td><td>hdd / nvme</td><td>rbd</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="info-box">
+      <h4>Current status (20 November 2026)</h4>
+      <p>104/104 OSDs up and in, 2,033 placement groups <code>active+clean</code>, 7/7 monitors quorate, 531 TiB raw at roughly 48% used. The four device classes remain: HDD ~53% used, NVMe ~61%, SSD ~35%, Optane ~15%. The cluster is healthy; the remaining Ceph warnings are an auth-key migration item, not a data-path problem.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What runs on it</h2>
+    <p>Alongside Ceph, four TrueNAS SCALE hosts provide NFS-backed bulk storage and the whole-slide imaging archive: <strong>brainhost/slidevault</strong> (36 HDDs, 458 TiB raw), <strong>icarus/daghome</strong> (all-SSD home and compute scratch), <strong>scratchy/samsungssd</strong> (all-SSD scratch), and <strong>gauss/tank</strong> (HDD bulk). Two QNAP units hold archival WSI data and restic targets. The benchmark story for those hosts is on the <a href="benchmarks.html">benchmarks page</a>.</p>
+    <p>A separate cluster, <a href="kubertpmox.html">kubertpmox</a>, handles disaster recovery and staging so that backups are not trapped inside the system they protect.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
+    <p>Site last verified 20 November 2026 · Hardware snapshot September 2026</p>
+  </div>
+</footer>
+
+</body>
+</html>

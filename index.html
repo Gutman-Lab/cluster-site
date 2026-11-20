@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cluster.drgutman.org — The GutmanLab Pathology Frankencluster</title>
+<meta name="description" content="Inside the GutmanLab compute and storage clusters: 15 Proxmox nodes, 104 Ceph OSDs, four storage tiers, and the benchmarks that explain what heterogeneous hardware can actually do.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="container">
+    <a class="brand" href="index.html">cluster<span>.drgutman.org</span></a>
+    <nav class="navlinks">
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="proxmox.html">Proxmox</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="kubertpmox.html">kubertpmox</a>
+      <a href="notes/index.html">Notes</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <h1>The Pathology Frankencluster</h1>
+    <p class="subtitle">Fifteen Proxmox nodes. Four storage classes in one Ceph cluster. A second all-flash cluster for disaster recovery. None of it uniform, and that is the point.</p>
+    <div class="stats">
+      <div class="stat"><div class="stat-num">15</div><div class="stat-label">Proxmox nodes</div></div>
+      <div class="stat"><div class="stat-num">104</div><div class="stat-label">Ceph OSDs</div></div>
+      <div class="stat"><div class="stat-num">531 TiB</div><div class="stat-label">Raw Ceph capacity</div></div>
+      <div class="stat"><div class="stat-num">4</div><div class="stat-label">Storage tiers</div></div>
+      <div class="stat"><div class="stat-num">9</div><div class="stat-label">DR cluster nodes</div></div>
+    </div>
+  </div>
+</section>
+
+<main class="container">
+
+  <section>
+    <h2 class="mt0">What this site is</h2>
+    <p class="lead">This is the public notebook for the compute and storage that runs the GutmanLab's pathology imaging work at Emory. It is part hardware tour, part operations log, and part benchmark archive. The cluster was not purchased as a single system; it accumulated. Each node has its own generation, RAM speed, drive mix, and personality.</p>
+    <p>Two clusters are documented here:</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>pmoxprime — the main cluster</h4>
+        <div class="value">15 nodes · Ceph Squid</div>
+        <div class="meta">Xeon Gold / mixed generations · 25 GbE + 10 GbE · ~5.3 TiB RAM</div>
+        <div class="detail">
+          Four Ceph device classes — HDD, SATA SSD, NVMe, and Optane-backed SSD — isolated by CRUSH rules.
+          Pools are mapped to workloads instead of pretending every disk is interchangeable. This is where
+          the Digital Slide Archive data, VMs, and research compute live.
+        </div>
+        <a class="more" href="proxmox.html">Hardware and Ceph layout →</a>
+      </div>
+      <div class="card">
+        <h4>kubertpmox — the DR cluster</h4>
+        <div class="value">9 nodes · all-flash Ceph</div>
+        <div class="meta">~560 vCPU · ~2.7 TB RAM · PVE 9.1.2</div>
+        <div class="detail">
+          A separate Proxmox cluster used for disaster recovery and staging. Thirteen OSDs across NVMe and
+          enterprise SSD, a primary <code>ceph_nvme</code> pool, CephFS with standby MDS, and backups to a
+          Proxmox Backup Server on the lab network.
+        </div>
+        <a class="more" href="kubertpmox.html">Inside kubertpmox →</a>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why "Frankencluster"</h2>
+    <p>Most clusters are bought in one purchase order: identical nodes, identical drives, identical warranty dates. This one grew from hand-me-downs, surplus finds, grant leftovers, and temporary measures that became permanent. Three generations of server hardware share one Ceph cluster. RAM runs at 2133, 2400, and 2666 MT/s. Drive classes span 6 TB spinning disks to Intel Optane-accelerated SSDs.</p>
+    <p>The interesting engineering question is not "can heterogeneous hardware work?" It obviously can. The question is <strong>which workload should land on which tier</strong>, and how much performance a small configuration change can unlock. That is what the benchmark section is for.</p>
+
+    <div class="info-box">
+      <h4>The short version of what we learned</h4>
+      <ul>
+        <li><strong>CRUSH device classes are the abstraction that makes this sane.</strong> One cluster, four tiers, explicit pool-to-tier mapping.</li>
+        <li><strong>MTU 9000 matters.</strong> Jumbo frames on the storage VLAN produced roughly a 10× improvement in some small-block tests.</li>
+        <li><strong>BlueFS DB/WAL offload turns HDDs into small-write contenders.</strong> HDDs with NVMe WAL hit 2,299 4 KB write IOPS — above the SATA SSD tier in the same test.</li>
+        <li><strong>ZFS defaults can cost you an order of magnitude.</strong> Three settings took one TrueNAS pool from 375 to 4,271 MiB/s with zero hardware changes.</li>
+        <li><strong>Verify the benchmark harness.</strong> A wrong grep string silently reported wrong IOPS for weeks.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Benchmark highlights</h2>
+    <p>All Ceph numbers below are <code>rados bench</code>, 30 seconds per test, 16 threads, 3× replication, MTU 9000, measured on the production cluster in September 2026. TrueNAS numbers are <code>fio</code> runs on the four storage hosts.</p>
+
+    <div class="metrics">
+      <div class="metric"><div class="val">1,175</div><div class="sub">MB/s · 4 MB NVMe read/write</div></div>
+      <div class="metric"><div class="val">852</div><div class="sub">MB/s · 4 MB HDD read</div></div>
+      <div class="metric"><div class="val">37,629</div><div class="sub">4 KB read IOPS · SSD</div></div>
+      <div class="metric"><div class="val">2,299</div><div class="sub">4 KB write IOPS · HDD + NVMe WAL</div></div>
+      <div class="metric"><div class="val">4,271</div><div class="sub">MiB/s · tuned ZFS sequential write</div></div>
+      <div class="metric"><div class="val">621K</div><div class="sub">4 KB random read IOPS · daghome</div></div>
+    </div>
+
+    <div class="info-box success">
+      <h4>The surprise: HDDs beat SATA SSDs on small writes</h4>
+      <p>HDDs with their WAL on NVMe reached <strong>2,299 4 KB write IOPS</strong> versus 1,999 for the plain SATA SSD tier. The rotational write penalty largely disappears when the write-ahead log lives on flash. Reads still favor SSD (37,629 vs 23,988 IOPS), but the gap is smaller than intuition suggests.</p>
+    </div>
+
+    <p><a href="benchmarks.html">See the full Ceph and TrueNAS benchmark tables, methodology, and caveats →</a></p>
+  </section>
+
+  <section>
+    <h2>Field notes</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h4>Ceph benchmarks deep dive</h4>
+        <div class="meta">September 20, 2026</div>
+        <div class="detail">What 99 OSDs across four storage classes actually deliver — and the benchmark parsing bug that nearly sent us down the wrong path.</div>
+        <a class="more" href="notes/ceph-benchmarks-deep-dive.html">Read the note →</a>
+      </div>
+      <div class="card">
+        <h4>How 3 ZFS settings cost us 11× performance</h4>
+        <div class="meta">September 17, 2026</div>
+        <div class="detail">A 503 GiB TrueNAS host writing at 375 MiB/s. Three configuration changes later: 4,271 MiB/s. No hardware was replaced.</div>
+        <a class="more" href="notes/icarus-optimization.html">Read the note →</a>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>About the numbers</h2>
+    <div class="info-box warn">
+      <h4>Snapshot, not live telemetry</h4>
+      <p>The benchmark campaign was run in September 2026 against <strong>14 nodes and 99 OSDs</strong>. The cluster has since grown to <strong>15 nodes and 104 OSDs</strong> (531 TiB raw, 2,033 placement groups as of 20 November 2026). The benchmark results are published as measured, not extrapolated. Where a figure is current rather than historical, this site says so.</p>
+    </div>
+    <p class="small muted">Maintained by the GutmanLab CMO. Content adapted from the lab's internal <code>GutmanLabDocumentation</code> repository and verified cluster notes. No credentials, internal addresses, or tenant data are published here.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
+    <p>Proxmox · Ceph Squid · TrueNAS SCALE · ZFS · QTS</p>
+    <p>Site last verified 20 November 2026 · Benchmarks measured September 2026</p>
+  </div>
+</footer>
+
+</body>
+</html>

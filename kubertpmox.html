@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kubertpmox — the DR cluster — cluster.drgutman.org</title>
+<meta name="description" content="Inside kubertpmox: a separate nine-node all-flash Proxmox and Ceph cluster used for disaster recovery, staging, and backups.">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="container">
+    <a class="brand" href="index.html">cluster<span>.drgutman.org</span></a>
+    <nav class="navlinks">
+      <a href="index.html">Overview</a>
+      <a href="proxmox.html">Proxmox</a>
+      <a href="benchmarks.html">Benchmarks</a>
+      <a href="kubertpmox.html" aria-current="page">kubertpmox</a>
+      <a href="notes/index.html">Notes</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+
+  <section>
+    <h1 style="margin-top:2rem">kubertpmox</h1>
+    <p class="lead">A second, separate Proxmox cluster: nine nodes, all-flash Ceph, and a deliberately lean layout. It exists so that disaster recovery does not depend on the cluster it is protecting.</p>
+
+    <div class="stats" style="display:flex;flex-wrap:wrap;gap:2rem;margin:1.6rem 0 0">
+      <div class="stat" style="text-align:left"><div class="stat-num">9</div><div class="stat-label">nodes</div></div>
+      <div class="stat" style="text-align:left"><div class="stat-num">~560</div><div class="stat-label">vCPU</div></div>
+      <div class="stat" style="text-align:left"><div class="stat-num">~2.7 TB</div><div class="stat-label">RAM</div></div>
+      <div class="stat" style="text-align:left"><div class="stat-num">13</div><div class="stat-label">Ceph OSDs</div></div>
+      <div class="stat" style="text-align:left"><div class="stat-num">HEALTH_OK</div><div class="stat-label">Ceph status</div></div>
+    </div>
+
+    <div class="info-box">
+      <h4>Why a second cluster</h4>
+      <p>Backups that live inside the system they protect are only half a backup. kubertpmox gives the lab an independent failure domain for VM backups, staging workloads, and disaster recovery. It is smaller and simpler than pmoxprime on purpose: fewer drive classes, fewer pools, fewer moving parts.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What is in it</h2>
+    <p>The cluster runs Proxmox VE 9.1.2 across nine hosts. Ceph uses <strong>13 OSDs — five NVMe and eight enterprise SSD</strong> — with a primary <code>ceph_nvme</code> pool at 3/2 replication. CephFS is active with two standby MDS daemons. Backups land on a Proxmox Backup Server on the lab network.</p>
+
+    <div class="card-grid">
+      <div class="card"><h4>kubert</h4><div class="value">144 vCPU · 541 GiB</div><div class="meta">3× NVMe + 11× SSD · GPU</div><div class="detail">Four-socket compute heavy lifter. The node most likely to run a large restore or staging workload.</div></div>
+      <div class="card"><h4>pmox2096</h4><div class="value">64 vCPU · 540 GiB</div><div class="meta">6× high-end SSD</div><div class="detail">Pure Ceph storage node: 4× 1.92 TB + 2× 3.84 TB enterprise SSD.</div></div>
+      <div class="card"><h4>shinken</h4><div class="value">48 vCPU · 406 GiB</div><div class="meta">Ceph mon + mgr</div><div class="detail">Runs the Corosync ring and the monitoring role for the cluster.</div></div>
+      <div class="card"><h4>pmox2093</h4><div class="value">48 vCPU · 406 GiB</div><div class="meta">Active Ceph mgr + NVMe</div><div class="detail">Active manager and NVMe OSD host.</div></div>
+      <div class="card"><h4>pmox2072</h4><div class="value">56 vCPU · 135 GiB</div><div class="meta">19× SAS SSD, ZFS</div><div class="detail">Local ZFS storage, deliberately outside Ceph. 18× 1.2 TB SAS plus a 4 TB EVO.</div></div>
+      <div class="card"><h4>pmox2070 / 2071</h4><div class="value">48–56 vCPU</div><div class="meta">135–270 GiB each</div><div class="detail">Ceph + VMs. Each contributes one NVMe and one SSD OSD.</div></div>
+    </div>
+
+    <h3>Cluster summary</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Nodes</td><td>9 (PVE 9.1.2)</td></tr>
+        <tr><td>Total vCPU</td><td>~560</td></tr>
+        <tr><td>Total RAM</td><td>~2.7 TB</td></tr>
+        <tr><td>Ceph OSDs</td><td>13 (5 NVMe + 8 SSD)</td></tr>
+        <tr><td>Ceph health</td><td>HEALTH_OK</td></tr>
+        <tr><td>CephFS</td><td>Active, 2 standby MDS</td></tr>
+        <tr><td>Primary pool</td><td>ceph_nvme (3/2 replicated)</td></tr>
+        <tr><td>Backups</td><td>Proxmox Backup Server on the lab network</td></tr>
+        <tr><td>Corosync</td><td>192.168.70.x range</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Drive detail</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Node</th><th>NVMe</th><th>SSD</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>kubert</td><td>3× 1 TB 970 EVO Plus</td><td>Mixed 1 TB EVO, 480 GB D2CSTK, 860 EVO, 4 TB EVO</td><td>Compute heavy lifter</td></tr>
+        <tr><td>pmox2072</td><td>—</td><td>18× 1.2 TB ST1200MM0007 + 4 TB EVO</td><td>ZFS local, not Ceph</td></tr>
+        <tr><td>pmox2096</td><td>—</td><td>4× 1.92 TB + 2× 3.84 TB enterprise SSD</td><td>Ceph storage node</td></tr>
+        <tr><td>Standard nodes</td><td>1–2× 1.88–2 TB NVMe</td><td>1–2× Samsung EVO</td><td>Paired OSD hosts</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <div class="info-box warn">
+      <h4>Snapshot date</h4>
+      <p>These figures come from the September 2026 cluster survey. Hardware and pool state change; treat this as an architectural description, not live telemetry. The main cluster's <a href="proxmox.html">status note</a> is kept closer to current.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it fits with pmoxprime</h2>
+    <p>The two clusters are managed separately and do not share a Ceph quorum, which is the point. pmoxprime is the production-adjacent system with the capacity tiers and the research data. kubertpmox is the smaller all-flash system that can absorb a restore, host a staging copy, or keep services alive if the main cluster is unavailable.</p>
+    <p>Both clusters are connected to the same 10 GbE lab network and the same operational tooling. The <a href="benchmarks.html">benchmark work</a> on this site focuses on pmoxprime because that is where the heterogeneous storage tiers are; kubertpmox is intentionally uniform.</p>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
+    <p>Site last verified 20 November 2026 · kubertpmox snapshot September 2026</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notes — cluster.drgutman.org</title>
+<meta name="description" content="Field notes from the GutmanLab cluster: Ceph benchmark deep dive and the ZFS tuning story behind an 11x speedup.">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="container">
+    <a class="brand" href="../index.html">cluster<span>.drgutman.org</span></a>
+    <nav class="navlinks">
+      <a href="../index.html">Overview</a>
+      <a href="../proxmox.html">Proxmox</a>
+      <a href="../benchmarks.html">Benchmarks</a>
+      <a href="../kubertpmox.html">kubertpmox</a>
+      <a href="index.html" aria-current="page">Notes</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+
+  <section>
+    <h1 style="margin-top:2rem">Field notes</h1>
+    <p class="lead">Longer write-ups that do not fit in a table. These are the stories behind the benchmark numbers: what broke, what we changed, and what we would do differently.</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h4>Ceph benchmarks deep dive</h4>
+        <div class="meta">September 20, 2026 · David Gutman</div>
+        <div class="detail">
+          Real-world <code>rados bench</code> results for a heterogeneous Ceph cluster — HDD, SSD, NVMe, and
+          Optane-backed OSDs — with 3× replication and MTU 9000. Includes the parsing bug that reported
+          wrong IOPS for weeks, the MTU 9000 improvement, and why the HDD tier is more competitive than it
+          has any right to be.
+        </div>
+        <a class="more" href="ceph-benchmarks-deep-dive.html">Read the deep dive →</a>
+      </div>
+      <div class="card">
+        <h4>How 3 ZFS settings cost us 11× performance</h4>
+        <div class="meta">September 17, 2026 · David Gutman</div>
+        <div class="detail">
+          A 503 GiB TrueNAS host with 8 SSDs in mirror, an NVMe special vdev, and a SLOG was writing at
+          375 MiB/s. <code>special_small_blocks</code>, <code>logbias</code>, and <code>zfs_dirty_data_max</code>
+          were each compounding the problem. After three changes: 4,271 MiB/s.
+        </div>
+        <a class="more" href="icarus-optimization.html">Read the tuning story →</a>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <h4>More to come</h4>
+      <p>The Optane-backed Ceph tier is being rebuilt and characterized; its benchmark note will land here when the numbers are trustworthy. The cluster status and hardware pages are updated as the system changes.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container">
+    <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
+    <p>Site last verified 20 November 2026</p>
+  </div>
+</footer>
+
+</body>
+</html>
