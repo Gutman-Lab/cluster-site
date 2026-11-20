@@ -272,8 +272,7 @@
 
     <p>
       Every Ceph node in our cluster now has MTU 9000 on dedicated storage
-      VLANs (172.16.25.0/24 for Ceph backup, 192.168.24.0/24 for Ceph public
-      where configured). The one lesson: <strong>verify end-to-end</strong> —
+      dedicated storage VLANs (separate public and cluster networks). The one lesson: <strong>verify end-to-end</strong> —
       a single misconfigured switch port will cause packet loss and
       performance degradation that's hard to diagnose.
     </p>
