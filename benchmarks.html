@@ -43,7 +43,7 @@
       <p><code>rados bench</code> uses a limited queue depth and a single OSD thread per RADOS instance. It <em>underreports</em> NVMe and multi-drive capability, often by 2–4×. Use these figures to compare tiers against each other, not as drive datasheet replacements. The NVMe write number in particular is a benchmark-harness ceiling, not a drive ceiling.</p>
     </div>
 
-    <p class="small muted">Capacity planning is a separate question from throughput: these tiers are measured, but how much usable space the bulk pools actually yield is set by erasure coding and the least-free HDD host. See <a href="ceph-capacity.html">Ceph capacity and mixed hardware</a>.</p>
+    <p class="small muted">Capacity planning is a separate question from throughput: these tiers are measured, but how much usable space the bulk pools actually yield is set by erasure coding, and what <code>ceph df</code> reports as free is set by the fullest OSD. See <a href="ceph-capacity.html">Ceph capacity and mixed hardware</a>.</p>
   </section>
 
   <section>

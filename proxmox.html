@@ -156,7 +156,7 @@
     </table>
     </div>
 
-    <p>Bulk capacity is not the sum of the drives. The EC pools are 4+2 with a host failure domain, so usable space is set by the least-free HDD host. See <a href="ceph-capacity.html">why Ceph capacity is set by the smallest host</a> for the arithmetic, the 8-bay versus 12-bay chassis effect, and what to add next.</p>
+    <p>Bulk capacity is not the sum of the drives. The EC pools are 4+2 with a host failure domain, so usable capacity is raw HDD space divided by 1.5, while the free-space figure <code>ceph df</code> reports is set by the fullest OSD. See <a href="ceph-capacity.html">what sets Ceph capacity</a> for the arithmetic, the 8-bay versus 12-bay chassis effect, and what to add next.</p>
 
     <div class="info-box">
       <h4>Current status (20 November 2026)</h4>

@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ceph capacity and mixed hardware — cluster.drgutman.org</title>
-<meta name="description" content="Why usable Ceph capacity is set by the least-free HDD host, not the fleet total: 4+2 erasure coding, host failure domains, and the 8-bay versus 12-bay chassis problem.">
+<title>Ceph capacity: the fullest OSD sets your headroom — cluster.drgutman.org</title>
+<meta name="description" content="Usable Ceph capacity is raw HDD space divided by erasure-code overhead. What ceph df MAX AVAIL actually measures, why the fullest OSD sets it, and why mixed 8-bay R730 / 12-bay R730xd hardware does not strand capacity.">
 <meta property="og:type" content="article">
-<meta property="og:title" content="Why Ceph capacity is set by the smallest host, not the biggest">
-<meta property="og:description" content="Eight HDD hosts, one 4+2 erasure-coded pool, and a nine-bay difference between chassis. Usable capacity is four times what the least-free host has left.">
+<meta property="og:title" content="Ceph capacity: the fullest OSD sets your headroom, not the biggest host">
+<meta property="og:description" content="Eight HDD hosts, one 4+2 erasure-coded pool, and a nine-bay difference between chassis. 407 TiB raw is ~127 TiB of usable EC data — ceph df reports 68 TiB because one disk is full before the rest.">
 <meta property="og:url" content="https://cluster.drgutman.org/ceph-capacity.html">
 <meta name="twitter:card" content="summary">
 <link rel="stylesheet" href="assets/site.css">
@@ -33,123 +33,176 @@
 
     <header>
       <p class="blog-meta">21 November 2026 · GutmanLab · live cluster snapshot</p>
-      <h1>Why Ceph capacity is set by the smallest host, not the biggest</h1>
+      <h1>Ceph capacity: the fullest OSD sets your headroom, not the biggest host</h1>
       <p class="blog-dek">
         Eight hosts contribute spinning disks, one 4+2 erasure-coded pool spans all of them,
-        and the chassis are a mix of 8-bay R730s and 12+2-bay R730xds. The usable number is
-        not the sum of the drives. It is four times what the least-free HDD host has left.
+        and the chassis are a mix of 8-bay R730s and 12+2-bay R730xds. Usable capacity is the
+        raw space divided by the code overhead — about 127 TiB of logical data. The
+        <code>ceph df</code> number everyone quotes, 68 TiB, is something narrower: how much
+        you can write before the single fullest disk fills up.
       </p>
     </header>
 
     <div class="info-box warn">
       <h4>Snapshot, not a dashboard</h4>
-      <p>Figures captured <strong>21 November 2026 00:15 UTC</strong> from <code>ceph df</code> and
-      <code>ceph osd df tree</code> on <code>pmox2064</code>. A bulk backfill was still running
-      (about 11% of objects misplaced at roughly 0.85 GiB/s), so <code>MAX AVAIL</code> will drift
-      as <code>pmox2065</code> fills. Re-run the commands at the bottom before making a purchase.</p>
+      <p>Figures captured <strong>21 November 2026 00:55 UTC</strong> from <code>ceph df</code> and
+      <code>ceph osd df tree</code>. A bulk backfill was still running (10.6% of objects misplaced
+      at roughly 750 MiB/s), so <code>MAX AVAIL</code> is <em>below</em> its steady-state value and
+      will <strong>rise</strong> as <code>pmox2065</code> fills and the fleet evens out. Re-run the
+      commands at the bottom before making a purchase.</p>
     </div>
 
     <h2>The short version</h2>
-    <p>Our bulk storage is one Ceph cluster built from whatever 3.5&quot; drives we had. Eight hosts contribute spinning disks; six contribute only flash; <code>triton</code> is the small control-plane node. The three bulk pools are <strong>erasure-coded 4+2 with a host failure domain</strong>, and that single design choice explains almost everything about how much usable space we actually get:</p>
+    <p>Our bulk storage is one Ceph cluster built from whatever 3.5&quot; drives we had. Eight hosts contribute spinning disks; six contribute only flash; <code>triton</code> is the small control-plane node. The three bulk pools are <strong>erasure-coded 4+2 with a host failure domain</strong>, so the usable ceiling is simply <strong>raw HDD capacity ÷ 1.5</strong>:</p>
 
     <div class="info-box success">
-      <p style="font-size:1.02rem"><strong>Usable EC capacity ≈ 4 × (free space on the host with the least free space).</strong></p>
+      <p style="font-size:1.02rem"><strong>407 TiB raw HDD → about 127 TiB of additional logical EC data</strong> before any disk is completely full.</p>
     </div>
 
-    <p>Not the total. Not the average. The <strong>worst host</strong>. Today that host is <code>pmox2057</code> with <strong>16.5 TiB free</strong>, which is why every EC pool reports <strong>68 TiB MAX AVAIL</strong>. The other ~175 TiB of free space across the fleet does not add to that number.</p>
+    <p>The number <code>ceph df</code> prints as <code>MAX AVAIL</code> — <strong>68 TiB</strong> today — is
+    <em>not</em> that capacity. It is how much you can write before the <strong>single fullest
+    OSD</strong> reaches 95%. The gap between 127 and 68 is <strong>imbalance</strong>: most disks have
+    headroom, one disk does not. Imbalance — not mixed drive sizes, and not differing drive counts
+    per host — is what costs capacity here.</p>
 
-    <p>This is not a bug. It is what &ldquo;host failure domain&rdquo; means, and it has real consequences for how we buy hardware.</p>
+    <p>This is not a bug, and it is the reason the same cluster can read &ldquo;68 TiB free&rdquo; while
+    owning 191 TiB of unused raw space. It matters for how we buy hardware.</p>
 
-    <h2>The fleet, as it actually stands</h2>
+    <h2>The fleet, with chassis context</h2>
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Host</th><th>Chassis</th><th class="num">3.5&quot; bays</th><th class="num">Spinners in Ceph</th><th class="num">Raw (hdd)</th><th class="num">Used</th><th class="num">Free</th><th class="num">% used</th></tr></thead>
+      <thead><tr><th>Host</th><th>Chassis</th><th class="num">3.5&quot; bays</th><th class="num">Spinners in Ceph</th><th class="num">Raw (hdd)</th><th class="num">Used</th><th class="num">Free</th><th class="num">Fill</th></tr></thead>
       <tbody>
-        <tr><td>pmox2057</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">43.7 TiB</td><td class="num">27.1</td><td class="num"><strong>16.5</strong></td><td class="num">62.1%</td></tr>
+        <tr><td>pmox2057</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">43.7 TiB</td><td class="num">27.1</td><td class="num"><strong>16.5</strong></td><td class="num"><strong>62.1%</strong></td></tr>
         <tr><td>pmox2059</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">47.3</td><td class="num">28.7</td><td class="num">18.6</td><td class="num">60.7%</td></tr>
-        <tr><td>pmox2060</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">49.1</td><td class="num">29.7</td><td class="num">19.4</td><td class="num">60.4%</td></tr>
-        <tr><td>pmox2058</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">49.1</td><td class="num">28.4</td><td class="num">20.7</td><td class="num">57.8%</td></tr>
+        <tr><td>pmox2060</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">49.1</td><td class="num">29.5</td><td class="num">19.6</td><td class="num">60.0%</td></tr>
+        <tr><td>pmox2058</td><td>R730</td><td class="num">8</td><td class="num">7</td><td class="num">49.1</td><td class="num">28.3</td><td class="num">20.8</td><td class="num">57.6%</td></tr>
         <tr><td>titan</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">8</td><td class="num">54.6</td><td class="num">30.8</td><td class="num">23.8</td><td class="num">56.4%</td></tr>
-        <tr><td>pmox2065</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">3</td><td class="num">27.1</td><td class="num">2.2</td><td class="num">24.9</td><td class="num"><strong>8.3%</strong></td></tr>
-        <tr><td>pmox2061</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">10</td><td class="num">65.5</td><td class="num">34.1</td><td class="num">31.4</td><td class="num">52.1%</td></tr>
+        <tr><td>pmox2061</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">10</td><td class="num">65.5</td><td class="num">33.9</td><td class="num">31.5</td><td class="num">51.8%</td></tr>
         <tr><td>pmox2062</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">11</td><td class="num">71.0</td><td class="num">35.0</td><td class="num">36.0</td><td class="num">49.3%</td></tr>
-        <tr><td><strong>Total</strong></td><td></td><td></td><td class="num"><strong>60</strong></td><td class="num"><strong>407 TiB</strong></td><td class="num"><strong>216 TiB</strong></td><td class="num"><strong>191 TiB</strong></td><td class="num"><strong>53.0%</strong></td></tr>
+        <tr><td>pmox2065</td><td>R730xd</td><td class="num">12 (+2 rear)</td><td class="num">3</td><td class="num">27.1</td><td class="num">2.8</td><td class="num">24.3</td><td class="num"><strong>10.2%</strong></td></tr>
+        <tr><td><strong>Total</strong></td><td></td><td></td><td class="num"><strong>60</strong></td><td class="num"><strong>407 TiB</strong></td><td class="num"><strong>216 TiB</strong></td><td class="num"><strong>191 TiB</strong></td><td class="num"><strong>53.1%</strong></td></tr>
       </tbody>
     </table>
     </div>
 
-    <p>Drive mix: 45 × 6 TB, 11 × 12 TB, 3 × 10 TB, 1 × 16 TB. The six remaining hosts (<code>2053</code>, <code>2054</code>, <code>2055</code>, <code>2056</code>, <code>2063</code>, <code>2064</code>) are R740/R740xd with SSD, Optane, and NVMe only — excellent for the flash tiers, but they are not in the <code>hdd</code> failure domain, so they contribute <strong>zero</strong> EC capacity no matter how many drives we add.</p>
+    <p>Drive mix: 45 × 6 TB, 11 × 12 TB, 3 × 10 TB, 1 × 16 TB. The six remaining hosts (<code>2053</code>, <code>2054</code>, <code>2055</code>, <code>2056</code>, <code>2063</code>, <code>2064</code>) are R740/R740xd with SSD, Optane, and NVMe only — excellent for the flash tiers, but they are not in the <code>hdd</code> class, so they contribute <strong>zero</strong> EC capacity no matter how many drives we add.</p>
 
-    <h2>What 4+2 actually does</h2>
+    <h2>What 4+2 on a host failure domain does</h2>
     <p>All three bulk pools — <code>cephfs_images_bulk</code> (image pyramids), <code>wsi-backup</code>, and the RGW bucket data — use the same effective profile:</p>
 
 <pre><code>k=4  m=2  plugin=jerasure  technique=reed_sol_van
 crush-failure-domain=host   crush-device-class=hdd</code></pre>
 
-    <p>Every object is cut into <strong>4 data chunks + 2 parity chunks = 6 chunks</strong>, and CRUSH places those six chunks on <strong>six different hosts</strong>. Consequences:</p>
+    <p>Every object is cut into <strong>4 data chunks + 2 parity chunks = 6 chunks</strong>, and CRUSH places those six chunks on <strong>six different HDD hosts</strong>. Consequences:</p>
     <ul>
-      <li><strong>Raw cost is 1.5×</strong> (6/4). Usable efficiency is <strong>2/3</strong> of raw — before the host constraint.</li>
+      <li><strong>Raw cost is 1.5×</strong> (6/4). Usable efficiency is <strong>2/3</strong> of raw: 407 TiB raw holds about 271 TiB of logical data in total, of which 216 TiB raw (≈144 TiB logical) is already used.</li>
       <li><strong>A single host can vanish</strong> and every object still has 5 chunks (4 data + 1 parity), which is exactly <code>min_size=5</code>: readable and writable, with <strong>zero margin</strong>. A second host loss takes those pools read-only.</li>
-      <li><strong>All three pools share one free-space pool.</strong> &ldquo;68 TiB MAX AVAIL&rdquo; is <em>one</em> number, not 3 × 68. Filling the image pool takes headroom away from backups and S3.</li>
+      <li><strong>All three pools share one device class.</strong> The identical &ldquo;68 TiB MAX AVAIL&rdquo; is <em>one</em> number, not 3 × 68. Filling the image pool takes headroom away from backups and S3.</li>
+      <li><strong>Host count matters for failure tolerance, not capacity.</strong> With 8 HDD hosts, 4+2 survives two host losses only while 6 remain reachable.</li>
     </ul>
 
-    <h2>Why mixed drive <em>counts</em> dominate</h2>
-    <p>Ceph does not divide total capacity by a redundancy factor and hand it to you. It places each PG&rsquo;s six chunks on six hosts, weighing hosts by how much raw space they have. As data grows, every host fills at roughly the same <strong>percentage</strong> — not the same <strong>bytes</strong>.</p>
+    <h2>The rule behind <code>MAX AVAIL</code></h2>
+    <p><code>ceph df</code> answers a narrow question — how much can I write before the fullest disk trips the full ratio — and it does so exactly. The figure is computed per device class from the <em>hottest single OSD</em>, not from hosts and not from the fleet total:</p>
 
-    <p>That is the whole trap: a host with less raw capacity reaches 100% while a host with more still has terabytes free. Since every object needs a chunk on <em>some</em> host, the fullest host&rsquo;s free space becomes the limit for the entire pool.</p>
+    <div class="info-box success">
+      <p style="font-size:1.02rem"><strong>MAX AVAIL = class_raw × (full_ratio − hottest_OSD_fill) × k ÷ (k + m)</strong></p>
+    </div>
 
-    <p>The clearest example is <code>pmox2065</code>. It joined recently with three 10 TB drives:</p>
-    <ul>
-      <li>Today it is <strong>8.3% full</strong> with 24.9 TiB free. It looks like headroom, and it is why the pool briefly reads 68 TiB.</li>
-      <li>Backfill will keep filling it until it is about 53% like everyone else. At that point it has <strong>~12.7 TiB free</strong> — less than <code>pmox2057</code> — and it becomes the new floor.</li>
-      <li>Result: the same pool that reads 68 TiB today would settle around <strong>51 TiB</strong> with no data added.</li>
-    </ul>
+    <p><code>full_ratio</code> is 0.95 on this cluster and <code>k=4, m=2</code>. Today the hottest HDD OSD
+    (<code>osd.40</code>, on <code>pmox2057</code>) sits at <strong>69.97%</strong>, so
+    407.31 × (0.95 − 0.6997) × 4 ÷ 6 = <strong>67.98 TiB</strong> — exactly what <code>ceph df</code>
+    reports for every 4+2 pool. The same formula on the 3×-replicated pools is equally exact:
+    407.31 × 0.2503 ÷ 3 = <strong>33.99 TiB</strong> for <code>ceph_bulk</code>, and
+    16.26 × (0.95 − 0.653) ÷ 3 = <strong>1.61 TiB</strong> for <code>ceph_nvme</code>.</p>
 
-    <p>Adding drives to a <em>small</em> host raises total capacity, but only helps the ceiling once that host stops being the smallest. And an empty new host always looks helpful for a few days before backfill catches up and reveals the real number.</p>
+    <p>The practical reading: <code>MAX AVAIL</code> is a <strong>headroom-to-the-fullest-disk</strong>
+    figure. It tells you how close the worst disk is to full, not how much storage the fleet owns.
+    When one disk is at 70% and the rest are near 50%, the reported number is roughly half the
+    real capacity.</p>
 
-    <h2>Why mixed drive <em>sizes</em> matter too</h2>
-    <p>The same logic applies inside the host. CRUSH weights OSDs by size, so a 12 TB drive carries roughly twice the PGs of a 6 TB drive, and fill percentages equalize. That is fine, with three practical caveats:</p>
+    <h2>Why mixed sizes and mixed drive counts don&rsquo;t strand capacity</h2>
+    <p>Ceph weights OSDs by size — <code>crush_weight</code> is the OSD&rsquo;s capacity in TiB — so every
+    disk attracts new data in proportion to what it holds, and <strong>fill percentage equalises by
+    construction</strong>. A 6 TB drive and a 12 TB drive end up at the same percentage; the 6 TB
+    simply holds half as much. A 7-drive host and an 11-drive host also converge to the same
+    percentage; the 7-drive host holds less in total, but it is not &ldquo;used up&rdquo; early and it does
+    not cap anyone else.</p>
+
+    <p>That is worth stating plainly because the intuition runs the other way: it feels like the
+    small host should run out first. It does not, as long as its weights are honest.</p>
+
+    <p>What genuinely costs capacity:</p>
     <ol>
-      <li><strong>Per-host totals are what matter for EC</strong>, not per-drive symmetry. A host with 7 × 6 TB (42 TB) and a host with 4 × 12 TB (48 TB) are close enough to behave similarly, even though their drive counts differ wildly.</li>
-      <li><strong>One small drive in an otherwise large host is not a big problem</strong> — it fills at the same percentage, so it just holds less. But a <strong>small drive in the <em>only</em> slot you have left</strong> can keep a host from rising off the floor.</li>
-      <li><strong>Rebuild and backfill are per-OSD.</strong> A 16 TB drive rebuilds far more slowly than a 6 TB drive, and backfill pressure lands hardest on whichever host is furthest below the cluster fill level. That is why a freshly added small host causes an outsized rebalance.</li>
+      <li><strong>Weights that no longer match reality.</strong> Replaced a 6 TB with a 12 TB and left
+      the old weight? That disk runs hot or cold relative to the fleet, and the hot one sets
+      <code>MAX AVAIL</code>.</li>
+      <li><strong>A partial or interrupted rebalance.</strong> This is our state today: the newest host is
+      at 10.2% while the oldest is at 62.1%. That 52-point spread is exactly why <code>MAX AVAIL</code>
+      reads 68 instead of ~114.</li>
+      <li><strong>Thin provisioning.</strong> Allocated-but-unwritten volumes consume nothing until
+      written, then arrive in a burst.</li>
+      <li><strong>Replicated pools on the same spindles.</strong> <code>ceph_bulk</code> (VM disks) is 3×
+      replicated: 17 TiB logical costs 51 TiB raw — about 12% of all HDD raw for 13% of the logical
+      bytes on hdd.</li>
     </ol>
 
-    <p>The R730 vs R730xd split is simply this in hardware form: <strong>8 bays vs 12 (+2 rear)</strong>. Our four R730s are effectively capped at 7&ndash;8 spinners; the R730xds can hold 11&ndash;12. If we fill all four R730s to 8 drives, they still total roughly 50 TiB each, and the R730xds will keep running ahead. That is not a problem to fix — it is a shape to plan around.</p>
+    <p><strong>Diagnostic:</strong> <code>ceph osd df</code> prints a <code>VAR</code> column — each OSD&rsquo;s
+    utilisation relative to the fleet average. Above ~1.2 is a reweight candidate; that is the lever
+    that moves <code>MAX AVAIL</code>, and it is free.</p>
 
-    <h2>The arithmetic, with our numbers</h2>
-    <p>The planning model is simple: total stored bytes stay fixed, every HDD host converges to the same fill percentage, and EC capacity is about 4 × the least-free host. Ceph&rsquo;s own reported number is slightly more generous than that (it reports 68 TiB against a 16.5 TiB floor), so treat these as conservative planning figures, not promises.</p>
+    <p>The R730 vs R730xd split is simply this in hardware form: <strong>8 bays vs 12 (+2 rear)</strong>.
+    The four R730s are effectively capped at 7–8 spinners; the R730xds can hold 11–12. That is a
+    shape to plan around, not a defect to fix.</p>
+
+    <h2>What 80 TiB actually costs</h2>
+    <p>80 TiB of EC data needs 120 TiB of raw space. Against 191 TiB free that fits with about 71 TiB
+    of slack — the only thing that makes it marginal today is the hot disk:</p>
 
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Scenario</th><th class="num">hdd raw</th><th class="num">Least-free host</th><th class="num">EC MAX AVAIL (approx.)</th></tr></thead>
+      <thead><tr><th>State</th><th class="num">Headline MAX AVAIL</th><th class="num">An 80 TiB pull ends at</th></tr></thead>
       <tbody>
-        <tr><td><strong>Today</strong> (actual, not yet equalized)</td><td class="num">407 TiB</td><td class="num">16.5 TiB (2057)</td><td class="num"><strong>68 TiB</strong></td></tr>
-        <tr><td>Do nothing — 2065 backfills to ~53%</td><td class="num">407 TiB</td><td class="num">~12.7 TiB (2065)</td><td class="num"><strong>~51 TiB</strong></td></tr>
-        <tr><td>Add 2065&rsquo;s four spare spinners (~20 TiB raw)</td><td class="num">427 TiB</td><td class="num">~21.6 TiB (2057)</td><td class="num"><strong>~86 TiB</strong></td></tr>
-        <tr><td>&hellip;plus one 12 TB drive in 2057&rsquo;s last bay</td><td class="num">438 TiB</td><td class="num">~23.9 TiB (2065)</td><td class="num"><strong>~96 TiB</strong></td></tr>
+        <tr><td>Today (hottest OSD 70.0%)</td><td class="num">68 TiB</td><td class="num">~99% on that OSD — would stall</td></tr>
+        <tr><td>After the pmox2065 backfill evens the fill out</td><td class="num">~114 TiB</td><td class="num">82.5% fleet average</td></tr>
+        <tr><td>Plus the 4 idle spinners in pmox2065 (+20 TiB)</td><td class="num">~126 TiB</td><td class="num">78.7%</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <p>Adding raw capacity raises every one of those numbers. There is no configuration in which more
+    drives reduce usable space.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Scenario</th><th class="num">hdd raw</th><th class="num">Logical to the 95% line</th><th class="num">Logical before 85% warnings</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Today</strong>, hottest OSD 70%</td><td class="num">407 TiB</td><td class="num"><strong>68 TiB</strong></td><td class="num">41 TiB</td></tr>
+        <tr><td>Evenly filled (53% across all OSDs)</td><td class="num">407 TiB</td><td class="num"><strong>114 TiB</strong></td><td class="num">87 TiB</td></tr>
+        <tr><td>+20 TiB idle spinners, evenly filled</td><td class="num">427 TiB</td><td class="num"><strong>126 TiB</strong></td><td class="num">98 TiB</td></tr>
       </tbody>
     </table>
     </div>
 
     <p>Two things worth internalizing from that table:</p>
     <ul>
-      <li><strong>Filling the small host first is worth more than buying a new chassis.</strong> <code>pmox2065</code> has four spare spinners — three 6 TB and one 4 TB, none currently in Ceph — already sitting in its bays. Claiming them lifts the ceiling from 51 back to roughly 86 TiB. That is the single cheapest capacity decision available.</li>
-      <li><strong>Every TiB of free space added to the floor host is worth about 4 TiB of usable EC capacity.</strong> Adding it to a host that is <em>not</em> the floor still helps a little, because it lowers the cluster-wide fill percentage, but the big multiplier only applies at the bottom.</li>
+      <li><strong>Evening out the fill is worth more than buying a new chassis.</strong> The backfill now
+      running lifts <code>MAX AVAIL</code> from 68 to roughly 114 TiB without a single drive added.
+      That is the cheapest capacity decision available.</li>
+      <li><strong>Claiming pmox2065&rsquo;s four spare spinners</strong> — three 6 TB and one 4 TB, installed
+      but not in Ceph (~20 TiB) — adds another ~12 TiB of headroom on top.</li>
     </ul>
-
-    <p>After those two moves the floor passes to <code>pmox2065</code> and <code>pmox2059</code> at roughly 47 TiB raw each. Further gains need those hosts to grow together: each drive you add to one host raises the ceiling only until the next-smallest host takes over as the limit.</p>
 
     <h2>Practical rules we now follow</h2>
     <ol>
-      <li><strong>Grow the floor, not the ceiling.</strong> Before buying anything, look at which <code>host</code> line in <code>ceph osd df tree</code> has the least <code>AVAIL</code> among <code>hdd</code> OSDs. That is the host to expand.</li>
+      <li><strong>Watch the fullest OSD, not the fullest host.</strong> Run <code>ceph osd df</code> and look at the top of the <code>%USE</code> column and the <code>VAR</code> column. Those are what set <code>MAX AVAIL</code>.</li>
+      <li><strong>Let rebalancing finish before you judge capacity.</strong> A newly added host or drive shows a flattering number until data lands on it.</li>
       <li><strong>Prefer filling empty bays over new chassis.</strong> Four spare spinners in an existing 12-bay box beat a new server with the same drives.</li>
-      <li><strong>Don&rsquo;t judge capacity from a newly added host.</strong> Wait for backfill to reach the cluster&rsquo;s fill percentage, then read <code>MAX AVAIL</code>.</li>
-      <li><strong>Never read <code>MAX AVAIL</code> per pool and add them up.</strong> The three EC pools share one pool of free space.</li>
-      <li><strong>Keep host totals within ~10&ndash;15% of each other</strong> when adding hardware. Beyond that, the smallest host silently caps everything.</li>
-      <li><strong>Match drive sizes when you can.</strong> Mixed sizes are supported, but a 4 TB drive next to 12 TB drives mainly exists to make the host smaller.</li>
+      <li><strong>Never read <code>MAX AVAIL</code> per pool and add them up.</strong> The three EC pools share one device class and one free-space pool.</li>
+      <li><strong>Keep OSD weights honest.</strong> If a drive changed size, reweight it. A stale weight is the one way mixed sizes actually hurt.</li>
+      <li><strong>Match drive sizes when you can.</strong> Mixed sizes are supported and self-balance, but a 4 TB drive next to 12 TB drives mainly exists to make the host smaller.</li>
       <li><strong>4+3 is a durability decision, not a capacity decision.</strong> Going from 4+2 to 4+3 tolerates two simultaneous host losses, but usable efficiency drops from 2/3 to 4/7 (~57%). It costs capacity; it does not create it.</li>
-      <li><strong>Watch the replicated pools.</strong> <code>ceph_bulk</code> — VM disks — is 3× replicated on these same spinners: 17 TiB logical costs ~51 TiB raw. That is about 12% of our hdd raw and 13% of the logical bytes stored on hdd, and it sits in the same failure domain as the EC pools.</li>
+      <li><strong>Watch the replicated pools.</strong> <code>ceph_bulk</code> — VM disks — is 3× replicated on these same spinners: 17 TiB logical costs ~51 TiB raw, in the same failure domain as the EC pools.</li>
     </ol>
 
     <h2>Cheat sheet: reading <code>ceph df</code></h2>
@@ -160,9 +213,12 @@ default.rgw.buckets.data  78 TiB  117 TiB  53.5%   68 TiB
 ceph_bulk                 17 TiB   51 TiB  33.3%   34 TiB</code></pre>
 
     <ul>
-      <li><code>USED</code> is <strong>raw</strong> consumption including parity/replicas; <code>STORED</code> is the logical amount.</li>
-      <li>The identical <code>MAX AVAIL</code> on the three EC pools is the tell: they share one free-space pool, and that number is driven by the emptiest-percentage / least-free <strong>host</strong>.</li>
-      <li><code>ceph osd df tree</code> is the view that matters for planning. Sort hosts by <code>AVAIL</code>, ignore <code>ssd</code>/<code>nvme</code>/<code>SSDoptane</code> rows when reasoning about bulk pools.</li>
+      <li><strong><code>MAX AVAIL</code></strong> — headroom before the fullest OSD hits 95%. Driven by one disk, not additive across pools, and it moves when data moves.</li>
+      <li><strong><code>USED</code></strong> is <strong>raw</strong> consumption including parity/replicas; <strong><code>STORED</code></strong> is the logical amount.</li>
+      <li>The identical <code>MAX AVAIL</code> on the three EC pools is the tell: they share one device class and one free-space pool.</li>
+      <li><strong>Absolute ceiling</strong> — for a 4+2 pool, free hdd raw ÷ 1.5 (191 ÷ 1.5 ≈ 127 TiB today).</li>
+      <li><strong>Nearfull / backfillfull / full</strong> — 85% / 90% / 95% per OSD. The first warns, the second stops backfilling onto that disk, the third stalls writes.</li>
+      <li><code>ceph osd df tree</code> is the view that matters for planning. Sort by <code>%USE</code>, ignore <code>ssd</code>/<code>nvme</code>/<code>SSDoptane</code> rows when reasoning about bulk pools.</li>
     </ul>
 
     <h2>Glossary for the non-storage reader</h2>
@@ -170,15 +226,25 @@ ceph_bulk                 17 TiB   51 TiB  33.3%   34 TiB</code></pre>
       <li><strong>OSD</strong> — one Ceph daemon managing one disk.</li>
       <li><strong>PG (placement group)</strong> — the unit Ceph replicates or erasure-codes; objects are hashed into PGs.</li>
       <li><strong>CRUSH</strong> — the algorithm that decides which hosts/OSDs hold each PG. It is deterministic, weight-aware, and has no central index.</li>
+      <li><strong>CRUSH weight</strong> — the share of data a disk attracts; set to its size in TiB.</li>
       <li><strong>Failure domain</strong> — the level at which Ceph guarantees separation. Here it is <code>host</code>, so two chunks of the same object never share a server.</li>
-      <li><strong>EC 4+2</strong> — four data chunks, two parity chunks; tolerates one chunk loss (in our case, one full host) with no data loss.</li>
+      <li><strong>k + m</strong> — data + parity chunks per object. 4+2 means 1.5× raw overhead.</li>
       <li><strong><code>min_size</code></strong> — the minimum chunks required for I/O. At 5 with 6 total, one host down is the edge of writability.</li>
+      <li><strong>Misplaced objects</strong> — data sitting on the wrong disk during a rebalance.</li>
     </ul>
+
+    <div class="info-box">
+      <h4>Correction</h4>
+      <p>An earlier revision of this page said usable capacity was &ldquo;four times the free space on
+      the least-free host&rdquo; and that filling <code>pmox2065</code> would drop headroom from 68 to
+      ~51 TiB. Both were wrong. Adding capacity cannot reduce capacity; the falling figure was a
+      <code>ceph df</code> estimate tracking the hottest OSD. Corrected 21 November 2026.</p>
+    </div>
 
     <div class="info-box">
       <h4>Reproduce the snapshot</h4>
 <pre style="margin:.5rem 0 0"><code>ceph df
-ceph osd df tree
+ceph osd df tree          # %USE and VAR, not host totals
 ceph osd erasure-code-profile get ec42
 ceph osd crush rule dump cephfs_images_bulk</code></pre>
     </div>
