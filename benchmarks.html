@@ -34,7 +34,7 @@
     <div class="info-box">
       <h4>Methodology — November 2026 campaign</h4>
       <ul>
-        <li><strong>Workload:</strong> <code>rados bench</code>, 30 seconds per test, 16 concurrent threads, 3× replication (size 3, min_size 2), against the dedicated profile pools.</li>
+        <li><strong>Workload:</strong> <code>rados bench</code>, 30 seconds per test, 16 concurrent threads, 3× replication (size 3, min_size 2), against the tier pools (<code>ceph_nvme</code>, <code>ceph_ssd</code>, <code>ceph_optane</code>, <code>ceph_bulk</code>).</li>
         <li><strong>Statistics:</strong> 3 repetitions per test, <strong>median reported</strong>. All 60 samples are in the CSV, including the wide NVMe write spread.</li>
         <li><strong>Client:</strong> run from <code>pmox2059</code>, a host with HDD OSDs only. No 4 MB read can be served by a local flash OSD, so every read crosses the network like a real client.</li>
         <li><strong>Cluster:</strong> idle — 109/109 OSDs up and in, every placement group <code>active+clean</code>, zero backfill or recovery for the whole campaign.</li>
@@ -49,6 +49,53 @@
     </div>
 
     <p class="small muted">Capacity planning is a separate question from throughput: these tiers are measured, but how much usable space the bulk pools actually yield is set by erasure coding, and what <code>ceph df</code> reports as free is set by the fullest OSD. See <a href="ceph-capacity.html">Ceph capacity and mixed hardware</a>.</p>
+  </section>
+
+  <section>
+    <h2>Hardware behind each tier</h2>
+    <p>A throughput number only means something next to the hardware that produced it. These are the drives behind the 22 November campaign, with counts from the post-campaign <code>topology.csv</code> snapshot: <em>up/in</em> is how many OSDs were participating, and raw capacity is what Ceph reports for the tier.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Tier</th><th class="num">Drives up/in</th><th class="num">Raw</th><th>Drive models</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><span class="tag tag-nvme">NVMe</span><br><span class="small muted"><code>ceph_nvme</code></span></td>
+          <td class="num">11 / 11</td>
+          <td class="num">16.3 TiB</td>
+          <td>10× Intel P3600 1.6 TB + 1× Samsung 1.92 TB</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-ssd">SSD</span><br><span class="small muted"><code>ceph_ssd</code></span></td>
+          <td class="num">19 / 21</td>
+          <td class="num">73.4 TiB<br><span class="small muted">66.3 TiB in</span></td>
+          <td>21× SmartStor 3.84 TB</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-optane">Optane-class</span><br><span class="small muted"><code>ceph_optane</code></span></td>
+          <td class="num">16 / 16</td>
+          <td class="num">37.6 TiB</td>
+          <td>11× ~1.92 TB SanDisk/Samsung + 5× SmartStor 3.84 TB</td>
+        </tr>
+        <tr>
+          <td><span class="tag tag-hdd">HDD</span><br><span class="small muted"><code>ceph_bulk</code></span></td>
+          <td class="num">62 / 62</td>
+          <td class="num">418.2 TiB</td>
+          <td>47× 6 TB Seagate + 11× 12 TB Seagate + 3× 10 TB Seagate + 1× 16 TB Seagate</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="small muted">Cluster total: 110 OSDs, 108 in · 538 TiB usable-reported raw (545.5 TiB CRUSH weight) · 38% used.</p>
+
+    <div class="info-box">
+      <h4>Reading the drive counts</h4>
+      <ul>
+        <li><strong>SSD ran with 19 of its 21 drives in.</strong> <code>osd.6</code> (<code>pmox2053</code>) and <code>osd.28</code> (<code>pmox2063</code>) are marked out with weight 0; both are 3.84 TB SmartStor, the same model as the rest of the tier. The 934 MB/s write and 66.3 TiB effective capacity are therefore about 90% of the tier, which makes the 2.2× SSD improvement since September understated rather than overstated.</li>
+        <li><strong>The <code>SSDoptane</code> CRUSH class is not homogeneous.</strong> It holds 16 drives, but 5 of them are the same 3.84 TB SmartStor used by the SSD tier; the other 11 are ~1.92 TB SanDisk/Samsung. “Optane-backed” is a class label here, not a uniform media type — the 909 MB/s write averages two drive generations that differ by roughly 2× in capacity.</li>
+        <li><strong>NVMe drive count rose, it did not fall.</strong> September ran 8 NVMe OSDs; November runs 11 across 10 hosts. If fewer drives explained the lower NVMe write number, the count would have had to drop. It did the opposite — the gap is the client path and the fixed 16-thread depth, not the drive count.</li>
+      </ul>
+    </div>
   </section>
 
   <section>
@@ -81,11 +128,25 @@
       <h4>What changed since September</h4>
       <ul>
         <li><strong>SSD 4 MB write: 431 → 934 MB/s (2.2×).</strong> The <code>ceph_ssd</code> pool went from 32 to 128 PGs and has finished rebalancing.</li>
-        <li><strong>NVMe 4 MB write: 1,175 → 769 MB/s.</strong> Repeats were 677 / 769 / 867, so the spread is wide. The P3600s are old and <code>ceph_nvme</code> is about 65% full; treat 769 as a current measurement and the trend as an open follow-up, not a new ceiling.</li>
+        <li><strong>NVMe 4 MB write: 1,175 → 769 MB/s.</strong> The campaign client changed from <code>pmox2064</code> (September; it also hosts flash OSDs) to the network-only <code>pmox2059</code>, so every read crosses the 10 GbE path. A control run on the same pool from <code>pmox2064</code> measured <strong>1,004 MB/s write / 1,196 MB/s read</strong> at 16 threads (n=3) and <strong>1,046–1,081 MB/s write</strong> at 32 threads. Most of the gap is the client path and queue depth, not the NVMe tier.</li>
         <li><strong>4 MB reads: ~1,170 → ~1,000 MB/s.</strong> Not a regression. The clean run is from a network-only client on a 10 GbE path; September's reads were faster on some runs because the bench node also hosted flash OSDs and served some reads locally.</li>
         <li><strong>4 KB reads are not directly comparable.</strong> September's 32K–37K IOPS came from a host with local flash OSDs. The November numbers are what a real client sees across the network.</li>
       </ul>
     </div>
+
+    <h3>NVMe control run: the same pool from both clients</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Client</th><th class="num">Threads</th><th class="num">4 MB write</th><th class="num">4 MB seq read</th></tr></thead>
+      <tbody>
+        <tr><td><code>pmox2064</code> (September client)</td><td class="num">16</td><td class="num">1,004 MB/s (999–1,099, n=3)</td><td class="num">1,196 MB/s</td></tr>
+        <tr><td><code>pmox2064</code> (September client)</td><td class="num">32</td><td class="num">1,046–1,081 MB/s</td><td class="num">—</td></tr>
+        <tr><td><code>pmox2059</code> (campaign client)</td><td class="num">16</td><td class="num">769 MB/s</td><td class="num">1,019 MB/s</td></tr>
+        <tr><td><code>pmox2059</code> (campaign client)</td><td class="num">32</td><td class="num">625 MB/s</td><td class="num">—</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="small muted">Control runs on <code>ceph_nvme</code>, same pool and 3× replication, 22 November 2026. More queue depth helps the September client but not the campaign client, whose 4 MB path is the slower one. At 32 threads the campaign client still reached <strong>13,442 4 KB write IOPS / 39,235 rand-read IOPS</strong>, both above September's 8,320 / 32,024. P3600 SMART is healthy: 1–3% used, 100% spare, zero media or data-integrity errors.</p>
   </section>
 
   <section>
@@ -116,7 +177,7 @@
       <li><strong>3× replication</strong> means each logical write becomes three OSD writes; the raw per-drive figure is roughly three times higher.</li>
       <li><strong>16 rados threads</strong> is far below the queue depth these drives can sustain (64–128+).</li>
       <li>The drives are <strong>Intel P3600</strong> — PCIe 3.0 enterprise NVMe from 2015. Fast for their generation, not modern Gen 4, and now running in a pool that is about 65% full.</li>
-      <li>The remaining gap is worth chasing: see the NVMe write trend in the follow-ups.</li>
+      <li>At 32 threads from <code>pmox2059</code>, 4 KB results reach <strong>13,442 write IOPS / 39,235 rand-read IOPS</strong> — both above September's 8,320 / 32,024. P3600 SMART is healthy (1–3% used, 100% spare, zero media or data-integrity errors), so the 16-thread 4 MB number is a harness-depth and client-path ceiling, not a drive problem.</li>
     </ul>
 
     <div class="info-box warn">
@@ -269,7 +330,7 @@
     <h3>What we would do differently</h3>
     <ol>
       <li>Put the client-facing Ceph public network on the 25 GbE fabric too (and MTU 9000 end to end). Today the public network is 10 GbE at MTU 1500 while replication is 25 GbE at MTU 9000, so a single-client benchmark cannot see the backend ceiling.</li>
-      <li>Chase the NVMe write trend: 769 MB/s idle versus 1,175 in September. Check P3600 wear and SMART, pool fullness (~65%), and primary-OSD balance.</li>
+      <li>Re-baseline from a common client before comparing campaigns. The NVMe gap is mostly the client change and 16-thread depth; SMART has been checked (1–3% used, zero errors), and the remaining ~7–10% is within the stated 10–20% background band.</li>
       <li>Benchmark NVMe with realistic queue depth via <code>rbd map</code> or multi-instance <code>fio</code>, not just 16-thread <code>rados bench</code>.</li>
       <li>Standardize MTU 9000 on every Ceph path; mixed-MTU links are hard to diagnose and quietly expensive.</li>
       <li>Characterize a new tier before putting production data on it — the Optane tier is now done.</li>
