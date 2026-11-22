@@ -101,7 +101,7 @@
       </tbody>
     </table>
     </div>
-    <p class="small muted">September 2026 snapshot. <strong>pmox2065</strong> was added in November 2026 with three 10 TB HDDs and a local NVMe for WAL/DB; the cluster is now 15 nodes / 109 OSDs / 531 TiB raw. triton's 6 TB is flash used for the control plane, not bulk storage.</p>
+    <p class="small muted">September 2026 snapshot. <strong>pmox2065</strong> was added in November 2026 with three 10 TB HDDs and a local NVMe for WAL/DB; the cluster is now 15 nodes / 109 OSDs / 542 TiB raw. triton's 6 TB is flash used for the control plane, not bulk storage.</p>
 
     <h3>RAM and network</h3>
     <p>Total RAM is roughly <strong>5.2 TiB of DDR4 ECC</strong>, a mix of 16 GB and 32 GB modules at 2133–2666 MT/s. Population is uneven by design: the all-flash compute nodes carry 503 GiB each, while the HDD hosts carry 188–377 GiB. Several nodes have empty DIMM slots, so memory can be expanded without replacing what is already there.</p>
@@ -123,7 +123,7 @@
       </tbody>
     </table>
     </div>
-    <p class="small muted">*OSD counts are the September 2026 benchmark snapshot. The cluster now has <strong>109 OSDs</strong> up and in after the pmox2065 HDD expansion and later additions. PG counts below are current as of 22 November 2026.</p>
+    <p class="small muted">*OSD counts are the September 2026 benchmark snapshot. As of 22 November 2026 the cluster has <strong>109 OSDs</strong> (62 HDD, 21 SSD, 11 NVMe, 15 Optane) up and in. PG counts below are current as of the same check.</p>
 
     <h3>BlueFS DB/WAL offload</h3>
     <p>Not every OSD keeps its data and metadata on the same device. HDD OSDs put their write-ahead log on NVMe; Optane-backed OSDs pair a 3.49 TB SATA SSD with a dedicated 64 GB NVMe partition for the BlueFS DB, with WAL co-located. This is the single biggest reason the HDD tier is competitive on small writes.</p>
@@ -160,7 +160,7 @@
 
     <div class="info-box">
       <h4>Current status (22 November 2026)</h4>
-      <p>109/109 OSDs up and in, every placement group <code>active+clean</code> (about 1,900 PGs), 7/7 monitors quorate, and <strong>zero backfill or recovery</strong> during the 22 November benchmark campaign. Capacity: 531 TiB raw at roughly 49% used at the 20 November snapshot. The four device classes remain: HDD ~58% used, NVMe ~76%, SSD ~41%, Optane ~12%. The remaining Ceph warnings are an auth-key migration item, not a data-path problem.</p>
+      <p>109/109 OSDs up and in, <strong>1,937 placement groups</strong>, 7/7 monitors quorate, and <strong>zero backfill or recovery</strong> during the 22 November benchmark campaign. Capacity: <strong>542 TiB raw at roughly 38% used</strong>. The four device classes remain: HDD ~39% used, SSD ~35%, NVMe ~61%, Optane ~16%. Bulk rebalance is complete — there is no active backfill, only deep-scrubbing. The remaining Ceph warnings are an auth-key migration item, not a data-path problem.</p>
     </div>
   </section>
 
