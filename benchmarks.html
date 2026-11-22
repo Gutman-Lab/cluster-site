@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Benchmarks — cluster.drgutman.org</title>
-<meta name="description" content="Ceph rados bench and TrueNAS fio results across HDD, SSD, NVMe, and Optane-backed tiers, plus the ZFS tuning that produced an 11x improvement.">
+<meta name="description" content="Clean four-tier Ceph rados bench results (22 November 2026, 3-rep medians), a September 2026 baseline, TrueNAS fio results, and the ZFS tuning that produced an 11x improvement.">
+<meta property="og:title" content="Benchmarks — cluster.drgutman.org">
+<meta property="og:description" content="What HDD, SATA SSD, NVMe, and Optane-backed Ceph tiers actually deliver from a single 10 GbE client — measured on an idle cluster with zero recovery.">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
@@ -27,20 +29,23 @@
 
   <section>
     <h1 style="margin-top:2rem">Benchmarks</h1>
-    <p class="lead">The most useful thing about a heterogeneous cluster is that you can measure what each kind of hardware actually does under the same workload. These are production numbers, not clean-room numbers: 3× replication, live cluster, September 2026.</p>
+    <p class="lead">The most useful thing about a heterogeneous cluster is that you can measure what each kind of hardware actually does under the same workload. This page carries two Ceph campaigns: a <strong>September 2026 baseline</strong> and a <strong>clean four-tier rerun on 22 November 2026</strong> — three repetitions per test, median reported, on an idle cluster with zero recovery — plus the September TrueNAS <code>fio</code> work and the ZFS tuning story.</p>
 
     <div class="info-box">
-      <h4>Methodology</h4>
+      <h4>Methodology — November 2026 campaign</h4>
       <ul>
-        <li><strong>Ceph:</strong> <code>rados bench</code>, 30 seconds per test, 16 concurrent threads, 3× replication (size 3, min_size 2), MTU 9000 on the storage fabric, run from a monitor node against dedicated profile pools.</li>
-        <li><strong>TrueNAS:</strong> <code>fio</code> runs against each pool, sequential and 4 KB random, plus a 70/30 mixed workload. ARC hit rates recorded per pool.</li>
-        <li><strong>Both:</strong> results reflect a real cluster doing real work. Background scrub, backup traffic, and other tenants can move the numbers by 10–20%.</li>
+        <li><strong>Workload:</strong> <code>rados bench</code>, 30 seconds per test, 16 concurrent threads, 3× replication (size 3, min_size 2), against the dedicated profile pools.</li>
+        <li><strong>Statistics:</strong> 3 repetitions per test, <strong>median reported</strong>. All 60 samples are in the CSV, including the wide NVMe write spread.</li>
+        <li><strong>Client:</strong> run from <code>pmox2059</code>, a host with HDD OSDs only. No 4 MB read can be served by a local flash OSD, so every read crosses the network like a real client.</li>
+        <li><strong>Cluster:</strong> idle — 109/109 OSDs up and in, every placement group <code>active+clean</code>, zero backfill or recovery for the whole campaign.</li>
+        <li><strong>Network:</strong> client traffic uses the Ceph public network (10 GbE, MTU 1500); replication uses the separate 25 GbE cluster network (MTU 9000).</li>
+        <li><strong>TrueNAS:</strong> <code>fio</code> runs from the September campaign — sequential and 4 KB random, plus a 70/30 mixed workload, with ARC hit rates recorded per pool.</li>
       </ul>
     </div>
 
     <div class="info-box warn">
       <h4>Read this before quoting a number</h4>
-      <p><code>rados bench</code> uses a limited queue depth and a single OSD thread per RADOS instance. It <em>underreports</em> NVMe and multi-drive capability, often by 2–4×. Use these figures to compare tiers against each other, not as drive datasheet replacements. The NVMe write number in particular is a benchmark-harness ceiling, not a drive ceiling.</p>
+      <p><code>rados bench</code> uses a limited queue depth and a single OSD thread per RADOS instance. It <em>underreports</em> NVMe and multi-drive capability, often by 2–4×. Use these figures to compare tiers against each other, not as drive datasheet replacements. And mind the scale of the client: a single 10 GbE client caps 4 MB reads near 1 GB/s no matter how fast the backend is.</p>
     </div>
 
     <p class="small muted">Capacity planning is a separate question from throughput: these tiers are measured, but how much usable space the bulk pools actually yield is set by erasure coding, and what <code>ceph df</code> reports as free is set by the fullest OSD. See <a href="ceph-capacity.html">Ceph capacity and mixed hardware</a>.</p>
@@ -48,66 +53,87 @@
 
   <section>
     <h2>1. Ceph — large objects (4 MB)</h2>
-    <p>At 4 MB, the network is usually the limit, not the media. Both SSD and NVMe reads land at roughly 1,170 MB/s, which is what a 25 GbE link can carry after overhead. The HDD tier's 852 MB/s read is the interesting result: spinning rust with NVMe WAL/DB offload is not the bottleneck people expect.</p>
+    <p>At 4 MB, the client link is the limit, not the media. Every tier — HDD included — reads at <strong>0.93–1.02 GB/s</strong> from a single client, which is what a 10 GbE public network carries after overhead. Those read numbers are a measurement of the <em>client path</em>, not of each tier's ceiling. The 25 GbE fabric is the OSD replication network; seeing the backend's real read capability would take multiple clients, or a client moved onto the 25 GbE network.</p>
 
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Class</th><th class="num">Write BW</th><th class="num">Write IOPS</th><th class="num">Read BW</th><th class="num">Read IOPS</th><th class="num">Rand read BW</th><th class="num">Rand read IOPS</th></tr></thead>
+      <thead><tr><th>Class</th><th class="num">4 MB write</th><th class="num">Write latency</th><th class="num">4 MB seq read</th><th class="num">4 MB rand read</th></tr></thead>
       <tbody>
-        <tr><td><span class="tag tag-nvme">NVMe</span></td><td class="num">1,175 MB/s</td><td class="num">293</td><td class="num">1,175 MB/s</td><td class="num">294</td><td class="num">1,175 MB/s</td><td class="num">294</td></tr>
-        <tr><td><span class="tag tag-ssd">SSD</span></td><td class="num">431 MB/s</td><td class="num">107</td><td class="num">1,170 MB/s</td><td class="num">292</td><td class="num">1,170 MB/s</td><td class="num">292</td></tr>
-        <tr><td><span class="tag tag-hdd">HDD + NVMe WAL</span></td><td class="num">346 MB/s</td><td class="num">86</td><td class="num">852 MB/s</td><td class="num">213</td><td class="num">852 MB/s</td><td class="num">213</td></tr>
+        <tr><td><span class="tag tag-nvme">NVMe</span></td><td class="num">769 MB/s</td><td class="num">83.1 ms</td><td class="num">1,019 MB/s</td><td class="num">1,019 MB/s</td></tr>
+        <tr><td><span class="tag tag-ssd">SSD</span></td><td class="num">934 MB/s</td><td class="num">68.5 ms</td><td class="num">982 MB/s</td><td class="num">980 MB/s</td></tr>
+        <tr><td><span class="tag tag-optane">Optane-backed</span></td><td class="num">909 MB/s</td><td class="num">70.3 ms</td><td class="num">933 MB/s</td><td class="num">927 MB/s</td></tr>
+        <tr><td><span class="tag tag-hdd">HDD + NVMe WAL</span></td><td class="num">529 MB/s</td><td class="num">120.5 ms</td><td class="num">949 MB/s</td><td class="num">1,007 MB/s</td></tr>
       </tbody>
     </table>
     </div>
+    <p class="small muted">Medians of three 30-second runs, 22 November 2026. Write and read IOPS are just bandwidth ÷ 4 MB (192, 233, 227, and 132 write IOPS respectively), so latency is the more useful second column.</p>
 
     <div class="info-box">
-      <h4>4 MB sequential read</h4>
-      <div class="bar-wrap"><span class="lbl">NVMe</span><div class="bar" style="width:100%;background:#86efac"></div><span class="bar-label">1,175 MB/s</span></div>
-      <div class="bar-wrap"><span class="lbl">SSD</span><div class="bar" style="width:99.5%;background:#93c5fd"></div><span class="bar-label">1,170 MB/s</span></div>
-      <div class="bar-wrap"><span class="lbl">HDD</span><div class="bar" style="width:72%;background:#fca5a5"></div><span class="bar-label">852 MB/s</span></div>
-      <p style="margin-top:.7rem">Random and sequential reads were effectively identical at 4 MB. With three replicas placed across OSDs by CRUSH, a 4 MB object is large enough that seek behavior stops mattering; throughput is set by the network and the slowest replica.</p>
+      <h4>4 MB write throughput</h4>
+      <div class="bar-wrap"><span class="lbl">NVMe</span><div class="bar" style="width:82%;background:#86efac"></div><span class="bar-label">769 MB/s</span></div>
+      <div class="bar-wrap"><span class="lbl">SSD</span><div class="bar" style="width:100%;background:#93c5fd"></div><span class="bar-label">934 MB/s</span></div>
+      <div class="bar-wrap"><span class="lbl">Optane</span><div class="bar" style="width:97%;background:#d8b4fe"></div><span class="bar-label">909 MB/s</span></div>
+      <div class="bar-wrap"><span class="lbl">HDD</span><div class="bar" style="width:57%;background:#fca5a5"></div><span class="bar-label">529 MB/s</span></div>
+      <p style="margin-top:.7rem">Writes are where the tiers separate. The HDD tier reaches 57% of the SATA SSD rate — entirely due to BlueFS WAL offload — while the three flash tiers land within 22% of each other. The SSD pool beating the NVMe pool is a real result for <em>this</em> hardware and pool state, not a general rule; see the notes below.</p>
     </div>
 
-    <p>Write throughput separates the tiers more honestly: NVMe writes at 2.7× the SATA SSD rate, and the HDD tier reaches about 80% of the SSD rate. That last figure is entirely due to BlueFS WAL offload.</p>
+    <div class="info-box warn">
+      <h4>What changed since September</h4>
+      <ul>
+        <li><strong>SSD 4 MB write: 431 → 934 MB/s (2.2×).</strong> The <code>ceph_ssd</code> pool went from 32 to 128 PGs and has finished rebalancing.</li>
+        <li><strong>NVMe 4 MB write: 1,175 → 769 MB/s.</strong> Repeats were 677 / 769 / 867, so the spread is wide. The P3600s are old and <code>ceph_nvme</code> is about 65% full; treat 769 as a current measurement and the trend as an open follow-up, not a new ceiling.</li>
+        <li><strong>4 MB reads: ~1,170 → ~1,000 MB/s.</strong> Not a regression. The clean run is from a network-only client on a 10 GbE path; September's reads were faster on some runs because the bench node also hosted flash OSDs and served some reads locally.</li>
+        <li><strong>4 KB reads are not directly comparable.</strong> September's 32K–37K IOPS came from a host with local flash OSDs. The November numbers are what a real client sees across the network.</li>
+      </ul>
+    </div>
   </section>
 
   <section>
     <h2>2. Ceph — small objects (4 KB)</h2>
-    <p>This is the test that reveals real differences. Small-object IOPS are dominated by seek time, controller overhead, and whether metadata operations land on flash.</p>
+    <p>Small-object throughput is where the tiers genuinely differ, because every operation pays replication and controller overhead. NVMe leads writes, Optane lands between NVMe and SSD, and the HDD tier stays close to the SATA SSD tier thanks to its NVMe write-ahead log.</p>
 
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Class</th><th class="num">Write BW</th><th class="num">Write IOPS</th><th class="num">Read BW</th><th class="num">Read IOPS</th></tr></thead>
+      <thead><tr><th>Class</th><th class="num">4 KB write BW</th><th class="num">4 KB write IOPS</th><th class="num">Write latency</th><th class="num">4 KB rand read IOPS</th></tr></thead>
       <tbody>
-        <tr><td><span class="tag tag-nvme">NVMe</span></td><td class="num">32.5 MB/s</td><td class="num">8,320</td><td class="num">125 MB/s</td><td class="num">32,024</td></tr>
-        <tr><td><span class="tag tag-ssd">SSD</span></td><td class="num">7.8 MB/s</td><td class="num">1,999</td><td class="num">147 MB/s</td><td class="num">37,629</td></tr>
-        <tr><td><span class="tag tag-hdd">HDD + NVMe WAL</span></td><td class="num">9.0 MB/s</td><td class="num">2,299</td><td class="num">94 MB/s</td><td class="num">23,988</td></tr>
+        <tr><td><span class="tag tag-nvme">NVMe</span></td><td class="num">24.0 MB/s</td><td class="num">6,142</td><td class="num">2.60 ms</td><td class="num">18,802</td></tr>
+        <tr><td><span class="tag tag-ssd">SSD</span></td><td class="num">7.3 MB/s</td><td class="num">1,869</td><td class="num">8.55 ms</td><td class="num">23,348</td></tr>
+        <tr><td><span class="tag tag-optane">Optane-backed</span></td><td class="num">17.9 MB/s</td><td class="num">4,593</td><td class="num">3.48 ms</td><td class="num">22,279</td></tr>
+        <tr><td><span class="tag tag-hdd">HDD + NVMe WAL</span></td><td class="num">5.2 MB/s</td><td class="num">1,324</td><td class="num">12.07 ms</td><td class="num">15,983</td></tr>
       </tbody>
     </table>
     </div>
+    <p class="small muted">Medians of three 30-second runs, 22 November 2026, network client on <code>pmox2059</code>. Reads were taken immediately after the writes that created the objects.</p>
 
     <div class="info-box success">
-      <h4>HDD write IOPS beat SATA SSD write IOPS</h4>
-      <p>The HDD tier reached <strong>2,299 4 KB write IOPS</strong> against 1,999 for the plain SATA SSD tier. The NVMe WAL absorbs the small writes and commits them asynchronously, so the rotating media no longer pays the seek penalty for each one. Reads still favor SSD (37,629 vs 23,988 IOPS), but the gap is far smaller than the hardware suggests.</p>
+      <h4>Hardware is not the only variable</h4>
+      <p>September showed HDDs <em>beating</em> the SATA SSD tier on 4 KB writes (2,299 vs 1,999 IOPS). The clean rerun reverses that (1,324 vs 1,869), because the SSD pool gained PGs and rebalanced while the HDD tier did not. The durable lesson is that small-write ordering depends on pool layout and WAL placement, not just on media — which is exactly why we re-measured before publishing a law.</p>
     </div>
 
     <h3>Why the NVMe write number looks low</h3>
-    <p>8,320 write IOPS is unimpressive for NVMe, and it is a harness artifact rather than a drive limit:</p>
+    <p>6,142 write IOPS is unimpressive for NVMe, and most of it is the harness rather than the drives:</p>
     <ul>
-      <li><strong>3× replication</strong> means each logical write becomes three OSD writes; the raw per-drive figure is roughly 25,000 IOPS.</li>
+      <li><strong>3× replication</strong> means each logical write becomes three OSD writes; the raw per-drive figure is roughly three times higher.</li>
       <li><strong>16 rados threads</strong> is far below the queue depth these drives can sustain (64–128+).</li>
-      <li><strong>32 PGs across 8 OSDs</strong> limits parallelism; 128–256 PGs would distribute load better.</li>
-      <li>The drives are <strong>Intel P3600</strong> — PCIe 3.0 enterprise NVMe from 2015, rated around 2,600 MB/s sequential and 460K random-read IOPS at QD128. Fast for their generation, not modern Gen 4.</li>
+      <li>The drives are <strong>Intel P3600</strong> — PCIe 3.0 enterprise NVMe from 2015. Fast for their generation, not modern Gen 4, and now running in a pool that is about 65% full.</li>
+      <li>The remaining gap is worth chasing: see the NVMe write trend in the follow-ups.</li>
     </ul>
+
+    <div class="info-box warn">
+      <h4>Do not compare 4 KB reads to September</h4>
+      <p>September's 4 KB read figures (32,024 IOPS NVMe, 37,629 SSD) were taken from <code>pmox2064</code>, which also hosts flash OSDs, so a meaningful share of reads were served locally. November ran from a network-only client. The table above is the number a client actually experiences; the September figures measure something else.</p>
+    </div>
   </section>
 
   <section>
-    <h2>3. Optane-backed tier — pending</h2>
-    <div class="info-box warn">
-      <h4>No published numbers yet</h4>
-      <p>The <code>ceph_optane</code> tier pairs a 3.49 TB SATA SSD with a dedicated 64 GB NVMe partition for BlueFS DB. Early benchmark runs exposed configuration problems that skewed the results, so the pool is being rebuilt before it is characterized. The expectation is a tier between SSD and NVMe: close to NVMe for metadata-heavy work, close to SSD for bulk throughput. We would rather publish nothing than publish a number we do not trust.</p>
-    </div>
+    <h2>3. Optane-backed tier — now characterized</h2>
+    <p>The <code>ceph_optane</code> tier pairs a 3.49 TB SATA SSD with a dedicated 64 GB NVMe partition for the BlueFS DB, with WAL co-located. After the pool was rebuilt and moved to 128 PGs, it now has publishable numbers:</p>
+    <ul>
+      <li><strong>4 MB write: 909 MB/s</strong> — essentially the SATA SSD rate, well above the HDD tier.</li>
+      <li><strong>4 KB write: 4,593 IOPS</strong> — about 2.5× the SSD tier, below NVMe's 6,142.</li>
+      <li><strong>4 KB random read: 22,279 IOPS</strong> — within 5% of SSD and above NVMe at this client depth, all network-capped.</li>
+    </ul>
+    <p>The original expectation was a tier between SSD and NVMe: close to NVMe for metadata-heavy work, close to SSD for bulk throughput. That is what the clean run shows. The earlier "pending" status was correct at the time — the configuration was not trustworthy — and it is now retired.</p>
   </section>
 
   <section>
@@ -223,57 +249,61 @@
     <h2>6. Lessons and caveats</h2>
     <div class="card-grid">
       <div class="card">
-        <h4>MTU 9000 is not optional</h4>
-        <div class="detail">Jumbo frames on the storage fabric produced roughly a 10× gain in some small-block tests. With 9,000-byte frames a 4 MB write is ~290 frames instead of ~2,800. One misconfigured switch port can undo it for the whole tier.</div>
+        <h4>Reads hit the client link first</h4>
+        <div class="detail">Across HDD, SSD, NVMe, and Optane, 4 MB reads landed at 0.93–1.02 GB/s. From one client on 10 GbE, that is the network, not the media. Raise the client path — more clients, or public traffic on the 25 GbE fabric — before buying faster drives.</div>
       </div>
       <div class="card">
-        <h4>BlueFS offload is a force multiplier</h4>
-        <div class="detail">Putting WAL (and sometimes DB) on NVMe makes HDDs competitive for small writes. It is the difference between "spinning rust is for cold data" and 2,299 write IOPS.</div>
+        <h4>BlueFS offload keeps HDDs close</h4>
+        <div class="detail">Putting WAL on NVMe took the bulk tier to 529 MB/s on 4 MB writes and 1,324 IOPS on 4 KB writes — 57% and 71% of the SATA SSD tier, from spinning disks. It is the difference between "HDD is for cold data" and a usable general-purpose tier.</div>
+      </div>
+      <div class="card">
+        <h4>Same client, or it is not a comparison</h4>
+        <div class="detail">September's 4 KB reads came from a host that also served some reads from local flash OSDs. Moving to a network-only client lowered the IOPS but made the number honest. Benchmark the path a real client uses.</div>
       </div>
       <div class="card">
         <h4>Benchmark scripts lie</h4>
-        <div class="detail">The automated harness parsed <code>"IOPS:"</code> while <code>rados bench</code> prints <code>"Average IOPS:"</code>. Every reported IOPS value was silently wrong for weeks. Manual runs exposed it and told a much better story.</div>
-      </div>
-      <div class="card">
-        <h4>Test the real access pattern</h4>
-        <div class="detail"><code>direct=1</code> bypasses the page cache; <code>psync</code> approximates NFS. The two can differ by 3×. Benchmark the workload you actually serve, not the one that produces the prettiest chart.</div>
+        <div class="detail">The original harness parsed <code>"IOPS:"</code> while <code>rados bench</code> prints <code>"Average IOPS:"</code>; every value was silently wrong for weeks. Separately, Ceph 19.2.7 rejects <code>-b</code> on <code>seq</code>/<code>rand</code>. Validate the harness before trusting a trend.</div>
       </div>
     </div>
 
     <h3>What we would do differently</h3>
     <ol>
-      <li>Raise PG counts on the NVMe pools (128–256 instead of 32) to improve small-object parallelism.</li>
+      <li>Put the client-facing Ceph public network on the 25 GbE fabric too (and MTU 9000 end to end). Today the public network is 10 GbE at MTU 1500 while replication is 25 GbE at MTU 9000, so a single-client benchmark cannot see the backend ceiling.</li>
+      <li>Chase the NVMe write trend: 769 MB/s idle versus 1,175 in September. Check P3600 wear and SMART, pool fullness (~65%), and primary-OSD balance.</li>
       <li>Benchmark NVMe with realistic queue depth via <code>rbd map</code> or multi-instance <code>fio</code>, not just 16-thread <code>rados bench</code>.</li>
       <li>Standardize MTU 9000 on every Ceph path; mixed-MTU links are hard to diagnose and quietly expensive.</li>
-      <li>Validate the benchmark harness before trusting months of results.</li>
-      <li>Characterize a new tier before putting production data on it (see the Optane tier).</li>
+      <li>Characterize a new tier before putting production data on it — the Optane tier is now done.</li>
     </ol>
 
     <div class="info-box">
       <h4>Reproduce it</h4>
 <pre><code># 4 MB large-object test
-rados -p &lt;pool&gt; bench 30 write -b 4194304 --no-cleanup
-rados -p &lt;pool&gt; bench 30 seq -b 4194304
-rados -p &lt;pool&gt; bench 30 rand -b 4194304
+rados -p &lt;pool&gt; bench 30 write -b 4194304 -t 16 --no-cleanup
+rados -p &lt;pool&gt; bench 30 seq  -t 16
+rados -p &lt;pool&gt; bench 30 rand -t 16
 
 # 4 KB small-object test
-rados -p &lt;pool&gt; bench 30 write -b 4096 --no-cleanup
-rados -p &lt;pool&gt; bench 30 rand -b 4096
+rados -p &lt;pool&gt; bench 30 write -b 4096 -t 16 --no-cleanup
+rados -p &lt;pool&gt; bench 30 rand -t 16
 
-rados -p &lt;pool&gt; cleanup</code></pre>
-      <p class="small muted">Always clean up the benchmark objects when you are done.</p>
+# clean up that run (objects are benchmark_data_&lt;host&gt;_&lt;pid&gt;_objectN)
+rados -p &lt;pool&gt; ls | grep benchmark_data_&lt;host&gt;_&lt;pid&gt;
+rados -p &lt;pool&gt; cleanup --prefix benchmark_data_&lt;host&gt;_&lt;pid&gt;</code></pre>
+      <p class="small muted">On Ceph Squid 19.2.7, <code>-b</code> is accepted only by <code>write</code>; <code>seq</code> and <code>rand</code> read the objects the write left behind. <code>--run-name</code> is accepted but ignored on this build, so clean by the actual <code>benchmark_data_&lt;host&gt;_&lt;pid&gt;</code> prefix. A 30-second 4 KB write leaves hundreds of thousands of objects and cleanup is not instant. Run the client on a host whose OSDs are of a different class than the pool under test, or local reads will inflate the result.</p>
     </div>
   </section>
 
   <section>
     <h2>Download the numbers</h2>
-    <p>The tables on this page are mirrored as CSV so they can be reused or re-plotted. They preserve the September 2026 values exactly, including the caveats above.</p>
+    <p>The November campaign is mirrored as both the median summary and all 60 raw samples; the September baseline is preserved separately.</p>
     <ul>
-      <li><a href="data/ceph-rados-bench-2026-09.csv">Ceph rados bench — 4 MB and 4 KB by tier</a></li>
+      <li><a href="data/ceph-rados-bench-2026-11-22-summary.csv">Ceph rados bench — 22 Nov 2026 medians, all four tiers</a></li>
+      <li><a href="data/ceph-rados-bench-2026-11-22-samples.csv">Ceph rados bench — 22 Nov 2026 raw samples (60 rows, with recovery/placement columns)</a></li>
+      <li><a href="data/ceph-rados-bench-2026-09.csv">Ceph rados bench — September 2026 baseline</a></li>
       <li><a href="data/truenas-fio-2026-09.csv">TrueNAS fio — four pools, sequential/random/mixed</a></li>
       <li><a href="data/icarus-tuning-2026-09.csv">Icarus ZFS tuning — progressive results</a></li>
     </ul>
-    <p class="small muted">If you cite these numbers, cite them as a September 2026 snapshot of a shared production cluster, not as isolated drive benchmarks.</p>
+    <p class="small muted">Cite the November numbers as a 22 November 2026 clean campaign (single 10 GbE client, 3-rep medians) and the TrueNAS numbers as September 2026. They are measurements of a shared production cluster, not isolated drive benchmarks.</p>
   </section>
 
 </main>
@@ -281,7 +311,7 @@ rados -p &lt;pool&gt; cleanup</code></pre>
 <footer>
   <div class="container">
     <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
-    <p>Benchmarks measured September 2026 · Ceph Squid 19.2.4 · TrueNAS SCALE 25.04</p>
+    <p>Benchmarks measured 22 November 2026 (Ceph, clean campaign) and September 2026 (baseline, TrueNAS) · Ceph Squid 19.2.7 · TrueNAS SCALE 25.04</p>
   </div>
 </footer>
 

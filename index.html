@@ -4,10 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>cluster.drgutman.org — The GutmanLab Pathology Frankencluster</title>
-<meta name="description" content="Inside the GutmanLab compute and storage clusters: 15 Proxmox nodes, 104 Ceph OSDs, four storage tiers, and the benchmarks that explain what heterogeneous hardware can actually do.">
+<meta name="description" content="Inside the GutmanLab compute and storage clusters: 15 Proxmox nodes, 109 Ceph OSDs, four storage tiers, and the benchmarks that explain what heterogeneous hardware can actually do.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="The Pathology Frankencluster — GutmanLab clusters and benchmarks">
-<meta property="og:description" content="15 Proxmox nodes, 104 Ceph OSDs, four storage tiers, a nine-node DR cluster, and the benchmarks that explain what heterogeneous hardware can actually do.">
+<meta property="og:description" content="15 Proxmox nodes, 109 Ceph OSDs, four storage tiers, a nine-node DR cluster, and the benchmarks that explain what heterogeneous hardware can actually do.">
 <meta property="og:url" content="https://cluster.drgutman.org/">
 <meta name="twitter:card" content="summary">
 <link rel="stylesheet" href="assets/site.css">
@@ -34,7 +34,7 @@
     <p class="subtitle">Fifteen Proxmox nodes. Four storage classes in one Ceph cluster. A second all-flash cluster for disaster recovery. None of it uniform, and that is the point.</p>
     <div class="stats">
       <div class="stat"><div class="stat-num">15</div><div class="stat-label">Proxmox nodes</div></div>
-      <div class="stat"><div class="stat-num">104</div><div class="stat-label">Ceph OSDs</div></div>
+      <div class="stat"><div class="stat-num">109</div><div class="stat-label">Ceph OSDs</div></div>
       <div class="stat"><div class="stat-num">531 TiB</div><div class="stat-label">Raw Ceph capacity</div></div>
       <div class="stat"><div class="stat-num">4</div><div class="stat-label">Storage tiers</div></div>
       <div class="stat"><div class="stat-num">9</div><div class="stat-label">DR cluster nodes</div></div>
@@ -84,8 +84,8 @@
       <h4>The short version of what we learned</h4>
       <ul>
         <li><strong>CRUSH device classes are the abstraction that makes this sane.</strong> One cluster, four tiers, explicit pool-to-tier mapping.</li>
-        <li><strong>MTU 9000 matters.</strong> Jumbo frames on the storage VLAN produced roughly a 10× improvement in some small-block tests.</li>
-        <li><strong>BlueFS DB/WAL offload turns HDDs into small-write contenders.</strong> HDDs with NVMe WAL hit 2,299 4 KB write IOPS — above the SATA SSD tier in the same test.</li>
+        <li><strong>Reads hit the client link first.</strong> Every tier reads at about 0.93–1.02 GB/s from one 10 GbE client. Faster drives do not move that number.</li>
+        <li><strong>BlueFS DB/WAL offload keeps HDDs close.</strong> HDDs with NVMe WAL reached 1,324 4 KB write IOPS and 529 MB/s on 4 MB writes — 71% and 57% of the SATA SSD tier, from spinning disks.</li>
         <li><strong>ZFS defaults can cost you an order of magnitude.</strong> Three settings took one TrueNAS pool from 375 to 4,271 MiB/s with zero hardware changes.</li>
         <li><strong>Verify the benchmark harness.</strong> A wrong grep string silently reported wrong IOPS for weeks.</li>
       </ul>
@@ -94,20 +94,20 @@
 
   <section>
     <h2>Benchmark highlights</h2>
-    <p>All Ceph numbers below are <code>rados bench</code>, 30 seconds per test, 16 threads, 3× replication, MTU 9000, measured on the production cluster in September 2026. TrueNAS numbers are <code>fio</code> runs on the four storage hosts.</p>
+    <p>All Ceph numbers below are <code>rados bench</code>, 30 seconds per test, 16 threads, 3× replication, from the clean 22 November 2026 campaign: three repetitions per test, median reported, on an idle cluster with zero recovery. A single 10 GbE client caps 4 MB reads near 1 GB/s. TrueNAS numbers are September 2026 <code>fio</code> runs on the four storage hosts.</p>
 
     <div class="metrics">
-      <div class="metric"><div class="val">1,175</div><div class="sub">MB/s · 4 MB NVMe read/write</div></div>
-      <div class="metric"><div class="val">852</div><div class="sub">MB/s · 4 MB HDD read</div></div>
-      <div class="metric"><div class="val">37,629</div><div class="sub">4 KB read IOPS · SSD</div></div>
-      <div class="metric"><div class="val">2,299</div><div class="sub">4 KB write IOPS · HDD + NVMe WAL</div></div>
+      <div class="metric"><div class="val">1,019</div><div class="sub">MB/s · 4 MB read, every tier (10 GbE client)</div></div>
+      <div class="metric"><div class="val">934</div><div class="sub">MB/s · 4 MB write · SATA SSD</div></div>
+      <div class="metric"><div class="val">769</div><div class="sub">MB/s · 4 MB write · NVMe</div></div>
+      <div class="metric"><div class="val">529</div><div class="sub">MB/s · 4 MB write · HDD + NVMe WAL</div></div>
+      <div class="metric"><div class="val">6,142</div><div class="sub">4 KB write IOPS · NVMe</div></div>
       <div class="metric"><div class="val">4,271</div><div class="sub">MiB/s · tuned ZFS sequential write</div></div>
-      <div class="metric"><div class="val">621K</div><div class="sub">4 KB random read IOPS · daghome</div></div>
     </div>
 
     <div class="info-box success">
-      <h4>The surprise: HDDs beat SATA SSDs on small writes</h4>
-      <p>HDDs with their WAL on NVMe reached <strong>2,299 4 KB write IOPS</strong> versus 1,999 for the plain SATA SSD tier. The rotational write penalty largely disappears when the write-ahead log lives on flash. Reads still favor SSD (37,629 vs 23,988 IOPS), but the gap is smaller than intuition suggests.</p>
+      <h4>The clean-run result: reads are the client, writes are the tiers</h4>
+      <p>Every tier — HDD included — read 4 MB objects at <strong>0.93–1.02 GB/s</strong> from one 10 GbE client, so the read table mostly measures the network. Writes separate the hardware: SATA SSD led at <strong>934 MB/s</strong>, up from 431 in September after a PG increase and rebalance; HDD reached <strong>529 MB/s</strong> with NVMe WAL offload. The earlier "HDDs beat SSDs on small writes" result did not survive the clean rerun, which is why we re-measured before publishing it as a rule.</p>
     </div>
 
     <p><a href="benchmarks.html">See the full Ceph and TrueNAS benchmark tables, methodology, and caveats →</a></p>
@@ -135,7 +135,7 @@
     <h2>About the numbers</h2>
     <div class="info-box warn">
       <h4>Snapshot, not live telemetry</h4>
-      <p>The benchmark campaign was run in September 2026 against <strong>14 nodes and 99 OSDs</strong>. The cluster has since grown to <strong>15 nodes and 104 OSDs</strong> (531 TiB raw, 2,033 placement groups as of 20 November 2026). The benchmark results are published as measured, not extrapolated. Where a figure is current rather than historical, this site says so.</p>
+      <p>The September 2026 baseline was run against <strong>14 nodes and 99 OSDs</strong>. The clean rerun on 22 November 2026 measured all four tiers on an idle cluster with <strong>15 nodes and 109 OSDs</strong> (531 TiB raw at the 20 November capacity snapshot) and zero recovery. Results are published as measured, not extrapolated. Where a figure is current rather than historical, this site says so.</p>
     </div>
     <p class="small muted">Maintained by GutmanLab. Content adapted from the lab's internal <code>GutmanLabDocumentation</code> repository and verified cluster notes. No credentials, internal addresses, or tenant data are published here.</p>
   </section>
@@ -146,7 +146,7 @@
   <div class="container">
     <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
     <p>Proxmox · Ceph Squid · TrueNAS SCALE · ZFS · QTS</p>
-    <p>Site last verified 20 November 2026 · Benchmarks measured September 2026</p>
+    <p>Site last verified 22 November 2026 · Ceph benchmarks measured 22 November 2026 · TrueNAS measured September 2026</p>
   </div>
 </footer>
 

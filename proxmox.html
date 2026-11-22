@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Proxmox and pmoxprime — cluster.drgutman.org</title>
-<meta name="description" content="A short Proxmox primer and a tour of pmoxprime: 15 nodes, four Ceph device classes, 25 GbE storage fabric, and the pools that map workloads to hardware.">
+<meta name="description" content="A short Proxmox primer and a tour of pmoxprime: 15 nodes, four Ceph device classes, a 25 GbE replication fabric plus a 10 GbE client network, and the pools that map workloads to hardware.">
 <link rel="stylesheet" href="assets/site.css">
 </head>
 <body>
@@ -63,7 +63,7 @@
 ┌──────────────────────────────────────────────────────────┐
 │                    15 × Proxmox nodes                    │
 │   pmox2053–pmox2065, titan, triton                       │
-│   25 GbE Ceph fabric (MTU 9000) + 10 GbE public mesh     │
+│   25 GbE Ceph cluster net (MTU 9000) + 10 GbE public net │
 ├──────────────────────────────────────────────────────────┤
 │                     Ceph Squid                           │
 │   ┌──────┐  ┌──────┐  ┌──────┐  ┌──────────┐            │
@@ -101,11 +101,11 @@
       </tbody>
     </table>
     </div>
-    <p class="small muted">September 2026 snapshot. <strong>pmox2065</strong> was added in November 2026 with three 10 TB HDDs and a local NVMe for WAL/DB; the cluster is now 15 nodes / 104 OSDs / 531 TiB raw. triton's 6 TB is flash used for the control plane, not bulk storage.</p>
+    <p class="small muted">September 2026 snapshot. <strong>pmox2065</strong> was added in November 2026 with three 10 TB HDDs and a local NVMe for WAL/DB; the cluster is now 15 nodes / 109 OSDs / 531 TiB raw. triton's 6 TB is flash used for the control plane, not bulk storage.</p>
 
     <h3>RAM and network</h3>
     <p>Total RAM is roughly <strong>5.2 TiB of DDR4 ECC</strong>, a mix of 16 GB and 32 GB modules at 2133–2666 MT/s. Population is uneven by design: the all-flash compute nodes carry 503 GiB each, while the HDD hosts carry 188–377 GiB. Several nodes have empty DIMM slots, so memory can be expanded without replacing what is already there.</p>
-    <p>Storage traffic runs on a dedicated <strong>25 GbE</strong> fabric (Mellanox ConnectX-4 Lx on the nodes that have been upgraded) with <strong>MTU 9000</strong>. A separate 10 GbE mesh carries public VM and management traffic. The Ceph public and cluster networks are separated; a misconfigured switch port or a single MTU 1500 host is enough to degrade the whole tier, which is why the fabric is checked end-to-end rather than per host.</p>
+    <p>Ceph uses two networks. <strong>Replication</strong> (OSD-to-OSD) runs on a dedicated <strong>25 GbE</strong> fabric — <code>172.16.25.0/24</code>, Mellanox ConnectX-4 Lx on the upgraded nodes, <strong>MTU 9000</strong>. <strong>Client traffic</strong> (RADOS, CephFS, RBD) runs on the public network — <code>10.10.10.0/24</code> over a <strong>10 GbE</strong> bridge at <strong>MTU 1500</strong>, shared with VM and management traffic. The two are separated on purpose, but it means a single-client benchmark is capped by 10 GbE no matter how fast the OSDs are. Moving the public network onto the 25 GbE fabric is the next networking change.</p>
   </section>
 
   <section>
@@ -123,7 +123,7 @@
       </tbody>
     </table>
     </div>
-    <p class="small muted">*Counts at the September 2026 benchmark. The cluster now has 104 OSDs after the pmox2065 HDD expansion.</p>
+    <p class="small muted">*OSD counts are the September 2026 benchmark snapshot. The cluster now has <strong>109 OSDs</strong> up and in after the pmox2065 HDD expansion and later additions. PG counts below are current as of 22 November 2026.</p>
 
     <h3>BlueFS DB/WAL offload</h3>
     <p>Not every OSD keeps its data and metadata on the same device. HDD OSDs put their write-ahead log on NVMe; Optane-backed OSDs pair a 3.49 TB SATA SSD with a dedicated 64 GB NVMe partition for the BlueFS DB, with WAL co-located. This is the single biggest reason the HDD tier is competitive on small writes.</p>
@@ -147,7 +147,7 @@
       <tbody>
         <tr><td>ceph_bulk</td><td>replicated</td><td>3/2</td><td class="num">512</td><td>replicated-hdd</td><td>rbd</td></tr>
         <tr><td>ceph_nvme</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated-nvme</td><td>rbd</td></tr>
-        <tr><td>ceph_optane</td><td>replicated</td><td>3/2</td><td class="num">32</td><td>ssdoptane_rule</td><td>rbd</td></tr>
+        <tr><td>ceph_optane</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>ssdoptane_rule</td><td>rbd</td></tr>
         <tr><td>ceph_ssd</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated-ssd</td><td>rbd</td></tr>
         <tr><td>cephfs_images_bulk</td><td>erasure-coded</td><td>6/5</td><td class="num">512</td><td>cephfs_images_bulk</td><td>cephfs</td></tr>
         <tr><td>cephfs_images_meta</td><td>replicated</td><td>3/2</td><td class="num">128</td><td>replicated_rule</td><td>cephfs</td></tr>
@@ -159,8 +159,8 @@
     <p>Bulk capacity is not the sum of the drives. The EC pools are 4+2 with a host failure domain, so usable capacity is raw HDD space divided by 1.5, while the free-space figure <code>ceph df</code> reports is set by the fullest OSD. See <a href="ceph-capacity.html">what sets Ceph capacity</a> for the arithmetic, the 8-bay versus 12-bay chassis effect, and what to add next.</p>
 
     <div class="info-box">
-      <h4>Current status (20 November 2026)</h4>
-      <p>104/104 OSDs up and in, 2,033 placement groups <code>active+clean</code>, 7/7 monitors quorate, 531 TiB raw at roughly 48% used. The four device classes remain: HDD ~53% used, NVMe ~61%, SSD ~35%, Optane ~15%. The cluster is healthy; the remaining Ceph warnings are an auth-key migration item, not a data-path problem.</p>
+      <h4>Current status (22 November 2026)</h4>
+      <p>109/109 OSDs up and in, every placement group <code>active+clean</code> (about 1,900 PGs), 7/7 monitors quorate, and <strong>zero backfill or recovery</strong> during the 22 November benchmark campaign. Capacity: 531 TiB raw at roughly 49% used at the 20 November snapshot. The four device classes remain: HDD ~58% used, NVMe ~76%, SSD ~41%, Optane ~12%. The remaining Ceph warnings are an auth-key migration item, not a data-path problem.</p>
     </div>
   </section>
 
@@ -175,7 +175,7 @@
 <footer>
   <div class="container">
     <p>GutmanLab · Emory University Department of Pathology · <a href="https://drgutman.org">drgutman.org</a></p>
-    <p>Site last verified 20 November 2026 · Hardware snapshot September 2026</p>
+    <p>Site last verified 22 November 2026 · Hardware snapshot September 2026 · Cluster status 22 November 2026</p>
   </div>
 </footer>
 

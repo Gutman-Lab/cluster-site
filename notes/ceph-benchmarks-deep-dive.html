@@ -34,6 +34,21 @@
       </p>
     </header>
 
+    <div class="callout warn">
+      <strong>Editor&rsquo;s note (22 November 2026):</strong> this post is mirrored from the
+      original lab write-up and the September 2026 numbers below are preserved as
+      measured. Two things have changed. Ceph now runs <strong>19.2.7</strong>, and
+      the networks are split: the <strong>public</strong> network is 10 GbE at
+      <strong>MTU 1500</strong>, while only the <strong>25 GbE
+      cluster/replication</strong> network is MTU 9000 — so the ~1,170 MB/s reads
+      below are a 10 GbE client ceiling, not a 25 GbE one. Separately, the 4 KB
+      read figures came from a host that also served reads from local flash OSDs.
+      A clean all-four-tier campaign on an idle cluster (network-only client,
+      three repetitions, median) is now the current reference. See the
+      <a href="../benchmarks.html">benchmarks page</a> for those numbers and the
+      corrected methodology.
+    </div>
+
     <h2>The Cluster</h2>
 
     <p>
